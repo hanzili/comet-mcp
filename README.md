@@ -1,5 +1,7 @@
 # comet-mcp
 
+[![npm version](https://img.shields.io/npm/v/comet-mcp.svg)](https://www.npmjs.com/package/comet-mcp)
+
 **Give Claude Code a browser that thinks.**
 
 An MCP server that connects Claude Code to [Perplexity Comet](https://www.perplexity.ai/comet) - enabling agentic web browsing, deep research, and real-time task monitoring.
