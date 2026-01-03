@@ -10,11 +10,11 @@ An MCP server that connects Claude Code to [Perplexity Comet](https://www.perple
 
 Existing web tools for Claude Code fall short:
 - **WebSearch/WebFetch** only return static text - no interaction, no login, no dynamic content
-- **Browser automation MCPs** (like browser-use) require you to script every click - they don't *think*
+- **Browser automation MCPs** (like browser-use) are agentic but use a generic LLM to control a browser - less polished, more fragile
 
-**Comet is different.** It's Perplexity's agentic browser - give it a goal, and it figures out how to get there. It can navigate complex sites, handle logins, fill forms, and synthesize information from multiple sources.
+**Comet is Perplexity's native agentic browser** - their AI is purpose-built for web research, deeply integrated with search, and battle-tested. Give it a goal, it figures out how to get there.
 
-**comet-mcp** bridges Claude Code and Comet, so you get the best of both: Claude's coding intelligence + Comet's web intelligence.
+**comet-mcp** bridges Claude Code and Comet: Claude's coding intelligence + Perplexity's web intelligence.
 
 ## Quick Start
 
