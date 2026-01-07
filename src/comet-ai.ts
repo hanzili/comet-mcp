@@ -138,9 +138,36 @@ export class CometAI {
    */
   private async submitPrompt(): Promise<void> {
     // Wait a moment for the UI to register the input
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 300));
 
-    // Strategy 1: Try clicking the submit button with various selectors
+    // Strategy 1: Use Enter key (most reliable for Perplexity)
+    try {
+      await cometClient.evaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]') ||
+                     document.querySelector('textarea');
+          if (el) el.focus();
+        })()
+      `);
+      await cometClient.pressKey("Enter");
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Check if submission worked (input should be cleared or response started)
+      const submitted = await cometClient.evaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]');
+          if (el && el.innerText.trim().length < 5) return true;
+          // Check if loading started
+          const hasLoading = document.querySelector('[class*="animate"]') !== null;
+          return hasLoading;
+        })()
+      `);
+      if (submitted.result.value) return;
+    } catch {
+      // Continue to button click fallback
+    }
+
+    // Strategy 2: Try clicking the submit button with various selectors
     const clickResult = await cometClient.evaluate(`
       (() => {
         // Common submit button selectors for Perplexity
@@ -216,44 +243,9 @@ export class CometAI {
     const clicked = (clickResult.result.value as { clicked: boolean; method?: string })?.clicked;
 
     if (clicked) {
-      // Wait briefly to ensure click was processed
       await new Promise(resolve => setTimeout(resolve, 100));
-      return;
     }
-
-    // Strategy 4: Use keyboard shortcuts
-    // First, ensure input is focused
-    await cometClient.evaluate(`
-      (() => {
-        const el = document.querySelector('[contenteditable="true"]') ||
-                   document.querySelector('textarea');
-        if (el) el.focus();
-      })()
-    `);
-
-    // Try Cmd/Ctrl + Enter (common submit shortcut)
-    try {
-      await cometClient.pressKey("Enter");
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch {
-      // Fallback: dispatch keyboard event directly
-      await cometClient.evaluate(`
-        (() => {
-          const el = document.querySelector('[contenteditable="true"]') ||
-                     document.querySelector('textarea');
-          if (el) {
-            el.dispatchEvent(new KeyboardEvent('keydown', {
-              key: 'Enter',
-              code: 'Enter',
-              keyCode: 13,
-              which: 13,
-              bubbles: true,
-              cancelable: true
-            }));
-          }
-        })()
-      `);
-    }
+    // If nothing worked, Enter key was already tried first - we've done what we can
   }
 
   /**

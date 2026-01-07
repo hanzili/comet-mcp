@@ -39,7 +39,12 @@ PROMPTING TIPS:
 - Give context and goals, not step-by-step instructions
 - Example: "Research the pricing models of top 3 auth providers for a B2B SaaS" (good)
 - Example: "Go to auth0.com, click pricing, then go to clerk.dev..." (less effective)
-- Comet will figure out the best browsing strategy`,
+- Comet will figure out the best browsing strategy
+
+FORMATTING WARNING:
+- Write prompts as natural sentences, NOT bullet points or markdown
+- Bad: "- Name: foo\\n- URL: bar" (newlines may be stripped, becomes confusing text)
+- Good: "The name is foo and the URL is bar"`,
     inputSchema: {
       type: "object",
       properties: {
@@ -134,12 +139,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const timeout = (args?.timeout as number) || 300000; // Default 5 minutes
         const newChat = (args?.newChat as boolean) || false;
 
+        // Get fresh URL from browser (not cached state)
+        const urlResult = await cometClient.evaluate('window.location.href');
+        const currentUrl = urlResult.result.value as string;
+        const isOnPerplexity = currentUrl?.includes('perplexity.ai');
+
         // Start fresh conversation if requested, or navigate if not on Perplexity
-        const state = cometClient.currentState;
-        const isOnPerplexity = state.currentUrl?.includes('perplexity.ai');
         if (newChat || !isOnPerplexity) {
           await cometClient.navigate("https://www.perplexity.ai/", true);
-          await new Promise(resolve => setTimeout(resolve, 1500)); // Wait for page load
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for page load
         }
 
         // Send the prompt

@@ -2,6 +2,10 @@
 
 [![npm version](https://img.shields.io/npm/v/comet-mcp.svg)](https://www.npmjs.com/package/comet-mcp)
 
+<a href="https://glama.ai/mcp/servers/@hanzili/comet-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@hanzili/comet-mcp/badge" />
+</a>
+
 **Give Claude Code a browser that thinks.**
 
 An MCP server that connects Claude Code to [Perplexity Comet](https://www.perplexity.ai/comet) - enabling agentic web browsing, deep research, and real-time task monitoring.
@@ -35,14 +39,11 @@ Add to `~/.claude.json` or `.mcp.json`:
 }
 ```
 
-### 2. Start Comet Browser
+### 2. Install Comet Browser
 
-Download [Perplexity Comet](https://www.perplexity.ai/comet) and launch with remote debugging:
+Download and install [Perplexity Comet](https://www.perplexity.ai/comet).
 
-```bash
-# macOS
-/Applications/Comet.app/Contents/MacOS/Comet --remote-debugging-port=9222
-```
+That's it! The MCP server will automatically launch Comet with remote debugging enabled when needed. If Comet is already running, it will restart it with the correct flags.
 
 ### 3. Use in Claude Code
 
@@ -77,8 +78,8 @@ Claude Code <-> MCP <-> comet-mcp <-> CDP <-> Comet Browser <-> Perplexity AI
 ## Troubleshooting
 
 **"Cannot connect to Comet"**
-- Make sure Comet is running with `--remote-debugging-port=9222`
-- Check if port 9222 is available
+- Make sure Comet is installed at `/Applications/Comet.app`
+- Check if port 9222 is available (no other Chrome/debugger using it)
 
 **"Tools not showing in Claude"**
 - Restart Claude Code after config changes
