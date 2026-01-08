@@ -51,6 +51,7 @@ FORMATTING WARNING:
         prompt: { type: "string", description: "Question or task for Comet - focus on goals and context" },
         timeout: { type: "number", description: "Max wait time in ms (default: 300000 = 5 min)" },
         newChat: { type: "boolean", description: "Start a fresh conversation (default: false)" },
+        agentic: { type: "boolean", description: "Enable browser control mode - prepends 'Take control of my browser and' to trigger Comet's agentic browsing (default: false)" },
       },
       required: ["prompt"],
     },
@@ -67,8 +68,13 @@ FORMATTING WARNING:
   },
   {
     name: "comet_screenshot",
-    description: "Capture a screenshot of current page",
-    inputSchema: { type: "object", properties: {} },
+    description: "Capture a screenshot of current page or the agent's browsing tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent_tab: { type: "boolean", description: "If true, capture the agent's browsing tab (where it navigated during agentic tasks) instead of the main Perplexity page" },
+      },
+    },
   },
   {
     name: "comet_mode",
@@ -87,7 +93,7 @@ FORMATTING WARNING:
 ];
 
 const server = new Server(
-  { name: "comet-bridge", version: "2.0.0" },
+  { name: "comet-bridge", version: "2.2.1" },
   { capabilities: { tools: {} } }
 );
 
@@ -135,9 +141,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "comet_ask": {
-        const prompt = args?.prompt as string;
+        let prompt = args?.prompt as string;
         const timeout = (args?.timeout as number) || 300000; // Default 5 minutes
         const newChat = (args?.newChat as boolean) || false;
+        const agentic = (args?.agentic as boolean) || false;
+
+        // Validate prompt
+        if (!prompt || prompt.trim().length === 0) {
+          return { content: [{ type: "text", text: "Error: prompt cannot be empty" }] };
+        }
+
+        // Prepend agentic instruction if requested (official Perplexity recommendation)
+        if (agentic) {
+          prompt = `Take control of my browser and ${prompt}`;
+        }
 
         // Get fresh URL from browser (not cached state)
         const urlResult = await cometClient.evaluate('window.location.href');
@@ -267,6 +284,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "comet_screenshot": {
+        const agentTab = args?.agent_tab as boolean;
+
+        if (agentTab) {
+          // Try to capture the agent's browsing tab
+          const tabs = await cometClient.listTabsCategorized();
+          if (tabs.agentBrowsing) {
+            // Temporarily connect to agent tab, screenshot, reconnect to main
+            const mainTab = tabs.main;
+            await cometClient.connect(tabs.agentBrowsing.id);
+            const result = await cometClient.screenshot("png");
+            if (mainTab) {
+              await cometClient.connect(mainTab.id);
+            }
+            return {
+              content: [
+                { type: "text", text: `Agent browsing: ${tabs.agentBrowsing.url}` },
+                { type: "image", data: result.data, mimeType: "image/png" }
+              ],
+            };
+          } else {
+            return { content: [{ type: "text", text: "No agent browsing tab found" }] };
+          }
+        }
+
         const result = await cometClient.screenshot("png");
         return {
           content: [{ type: "image", data: result.data, mimeType: "image/png" }],

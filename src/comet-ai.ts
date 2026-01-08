@@ -287,7 +287,7 @@ export class CometAI {
       const currentText = (result.result.value as string) || "";
 
       // Check if response has stabilized (text same for 3 consecutive checks)
-      if (currentText.length > 10 && currentText === lastText) {
+      if (currentText.length > 0 && currentText === lastText) {
         stableCount++;
         if (stableCount >= 3) {
           this.lastResponseText = currentText;
@@ -424,6 +424,12 @@ export class CometAI {
         const hasFinishedMarker = body.includes('Finished') && !hasActiveStopButton;
         const hasReviewedSources = /Reviewed \\d+ sources?/i.test(body);
 
+        // Check for simple query completion (has follow-up prompt and any answer content)
+        const hasAskFollowUp = body.includes('Ask a follow-up');
+        const hasProseContent = [...document.querySelectorAll('[class*="prose"]')].some(
+          el => el.innerText.trim().length > 0
+        );
+
         // Working indicators
         const workingPatterns = [
           'Working…', 'Working...', 'Searching', 'Reviewing sources',
@@ -442,6 +448,9 @@ export class CometAI {
           status = 'completed';
         } else if (hasWorkingText) {
           status = 'working';
+        } else if (hasAskFollowUp && hasProseContent && !hasActiveStopButton) {
+          // Simple query completed - has follow-up prompt and prose content
+          status = 'completed';
         }
 
         // Extract agent steps
@@ -467,46 +476,80 @@ export class CometAI {
         // Extract response for completed status
         let response = '';
         if (status === 'completed') {
-          // Strategy 1: Look for prose elements (main answer content)
-          // Take the LAST one - most recent answer in conversation
-          const proseEls = document.querySelectorAll('[class*="prose"]');
-          for (let i = proseEls.length - 1; i >= 0; i--) {
-            const text = proseEls[i].innerText.trim();
-            if (text.length > 5 && !text.startsWith('Related')) {
-              response = text;
-              break;
+          // Strategy 1: Look for the answer section specifically
+          // Perplexity shows answers in a specific content area, not sidebar
+          const mainContent = document.querySelector('main') || document.querySelector('[role="main"]');
+          const searchBase = mainContent || document.body;
+
+          // Find all prose elements in the main content area
+          const allProseEls = searchBase.querySelectorAll('[class*="prose"]');
+          const validProseTexts = [];
+
+          for (const el of allProseEls) {
+            // Skip if inside navigation, sidebar, input areas, or suggestions
+            if (el.closest('nav') ||
+                el.closest('aside') ||
+                el.closest('header') ||
+                el.closest('footer') ||
+                el.closest('[class*="sidebar"]') ||
+                el.closest('[class*="history"]') ||
+                el.closest('[class*="input"]') ||
+                el.closest('[class*="search"]') ||
+                el.closest('[class*="suggestion"]') ||
+                el.closest('textarea') ||
+                el.closest('form')) {
+              continue;
+            }
+
+            const text = el.innerText.trim();
+
+            // Skip known UI navigation text
+            const isUIText = ['Library', 'Discover', 'Spaces', 'Finance', 'Account',
+                              'Upgrade', 'Home', 'View All', 'Search', 'Ask a follow-up',
+                              'Related', 'Images', 'Links', 'Answer'].some(ui => text.startsWith(ui));
+            if (isUIText) continue;
+
+            // Skip if it looks like a question (ends with ?) and isn't an answer
+            if (text.endsWith('?') && text.length < 100) continue;
+
+            // Accept meaningful text
+            if (text.length > 5) {
+              validProseTexts.push(text);
             }
           }
 
-          // Strategy 2: Look for answer section by structure
-          if (!response) {
-            // Find the main content area after "Reviewed X sources"
-            const reviewedMatch = body.match(/Reviewed \\d+ sources?/);
-            if (reviewedMatch) {
-              const startIdx = body.indexOf(reviewedMatch[0]) + reviewedMatch[0].length;
-              const endMarkers = ['Related', 'Ask a follow-up', 'Ask anything', 'Share', 'Copy'];
-              let endIdx = body.length;
-              for (const marker of endMarkers) {
-                const idx = body.indexOf(marker, startIdx);
-                if (idx > startIdx && idx < endIdx) endIdx = idx;
-              }
-              response = body.substring(startIdx, endIdx).trim();
-            }
+          // Take the LONGEST valid prose element (most content = main answer)
+          // This works better than "last" because summaries at the bottom are shorter
+          if (validProseTexts.length > 0) {
+            response = validProseTexts.reduce((longest, current) =>
+              current.length > longest.length ? current : longest
+            );
           }
 
-          // Strategy 3: Fallback - extract after completion marker
+          // Strategy 2: Look for specific answer text patterns
           if (!response || response.length < 5) {
-            const completionIdx = body.indexOf('steps completed');
-            if (completionIdx > -1) {
-              const afterCompletion = body.substring(completionIdx + 15);
-              const endMarkers = ['Related', 'Ask a follow-up', 'Ask anything', 'Sources'];
-              let endIdx = afterCompletion.length;
-              for (const marker of endMarkers) {
-                const idx = afterCompletion.indexOf(marker);
-                if (idx > 0 && idx < endIdx) endIdx = idx;
+            // Look for text that appears after the sources indicator
+            const bodyText = document.body.innerText;
+            // Find text between "sources" and "Ask a follow-up"
+            const sourcesIdx = bodyText.lastIndexOf(' sources');
+            const followUpIdx = bodyText.indexOf('Ask a follow-up');
+            if (sourcesIdx > 0 && followUpIdx > sourcesIdx) {
+              const between = bodyText.substring(sourcesIdx + 10, followUpIdx).trim();
+              // Remove citation markers and clean up
+              const cleaned = between.replace(/[a-z]+\\.com|wikipedia|reddit/gi, '').trim();
+              if (cleaned.length > 10) {
+                response = cleaned;
               }
-              response = afterCompletion.substring(0, endIdx).trim();
             }
+          }
+
+          // Clean up the response - remove UI artifacts
+          if (response) {
+            response = response.replace(/View All/gi, '').trim();
+            response = response.replace(/Show more/gi, '').trim();
+            response = response.replace(/Ask a follow-up/gi, '').trim();
+            response = response.replace(/\\d+ sources?/gi, '').trim();
+            response = response.replace(/\\s+/g, ' ').trim();
           }
         }
 
@@ -514,7 +557,7 @@ export class CometAI {
           status,
           steps: [...new Set(steps)].slice(-5),
           currentStep,
-          response: response.substring(0, 3000),
+          response: response.substring(0, 8000),
           hasStopButton: hasActiveStopButton
         };
       })()
