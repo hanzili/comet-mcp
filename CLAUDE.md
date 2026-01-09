@@ -29,10 +29,6 @@ Claude Code → MCP Server (index.ts) → CometAI (comet-ai.ts) → CDP Client (
 **Prompt normalization**:
 - Strips bullet points, collapses newlines to spaces
 
-## Known Limitation
-`newChat=true` after agentic browsing is unreliable (CDP connection state issue).
-**Workaround**: Call `comet_connect` first to reset state.
-
 ## Build & Test
 ```bash
 npm run build

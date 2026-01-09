@@ -129,30 +129,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .replace(/\s+/g, ' ')         // Collapse multiple spaces
           .trim();
 
-        // For newChat: navigate to Perplexity home for a fresh conversation
-        // NOTE: After agentic browsing, call comet_connect first for reliable results
+        // For newChat: full reset (same as comet_connect) to handle post-agentic state
         if (newChat) {
-          // Find Perplexity tab
+          // Clean up extra tabs (fixes CDP state after agentic browsing)
           const targets = await cometClient.listTargets();
-          const perplexityTab = targets.find(t => t.type === 'page' && t.url.includes('perplexity.ai'));
+          const pageTabs = targets.filter(t => t.type === 'page');
+          if (pageTabs.length > 1) {
+            for (let i = 1; i < pageTabs.length; i++) {
+              try { await cometClient.closeTab(pageTabs[i].id); } catch { /* ignore */ }
+            }
+          }
 
-          if (perplexityTab) {
-            await cometClient.connect(perplexityTab.id);
+          // Fresh connect to remaining tab
+          const freshTargets = await cometClient.listTargets();
+          const mainTab = freshTargets.find(t => t.type === 'page');
+          if (mainTab) {
+            await cometClient.connect(mainTab.id);
           }
 
           // Navigate to Perplexity home
           await cometClient.navigate("https://www.perplexity.ai/", true);
           await new Promise(resolve => setTimeout(resolve, 1500));
-
-          // Wait for input element
-          for (let i = 0; i < 6; i++) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            const checkResult = await cometClient.evaluate(`
-              document.querySelector('[contenteditable="true"]') !== null ||
-              document.querySelector('textarea') !== null
-            `);
-            if (checkResult.result.value) break;
-          }
         } else {
           // Not newChat - just ensure we're on Perplexity
           const tabs = await cometClient.listTabsCategorized();
