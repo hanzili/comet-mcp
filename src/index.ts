@@ -22,43 +22,20 @@ const TOOLS: Tool[] = [
   },
   {
     name: "comet_ask",
-    description: `Send a prompt to Comet/Perplexity and wait for the complete response (blocking).
-
-WHEN TO USE COMET vs other tools:
-- USE COMET for: tasks requiring real browser interaction (login walls, dynamic content, multi-step navigation, filling forms, clicking buttons, scraping live data from specific sites)
-- USE COMET for: deep research that benefits from Perplexity's agentic browsing (comparing multiple sources, following links, comprehensive analysis)
-- USE regular WebSearch/WebFetch for: simple factual queries, quick lookups, static content
-
-IMPORTANT - Comet is for DOING, not just ASKING:
-- DON'T ask "how to" questions → use WebSearch instead
-- DO ask Comet to perform actions: "Go to X and do Y"
-- Bad: "How do I generate a P8 key in App Store Connect?"
-- Good: "Take over the browser, go to App Store Connect, navigate to In-App Purchase keys section"
-
-PROMPTING TIPS:
-- Give context and goals, not step-by-step instructions
-- Example: "Research the pricing models of top 3 auth providers for a B2B SaaS" (good)
-- Example: "Go to auth0.com, click pricing, then go to clerk.dev..." (less effective)
-- Comet will figure out the best browsing strategy
-
-FORMATTING WARNING:
-- Write prompts as natural sentences, NOT bullet points or markdown
-- Bad: "- Name: foo\\n- URL: bar" (newlines may be stripped, becomes confusing text)
-- Good: "The name is foo and the URL is bar"`,
+    description: "Send a prompt to Comet/Perplexity and wait for the complete response (blocking). Ideal for tasks requiring real browser interaction (login walls, dynamic content, filling forms) or deep research with agentic browsing.",
     inputSchema: {
       type: "object",
       properties: {
         prompt: { type: "string", description: "Question or task for Comet - focus on goals and context" },
-        wait: { type: "number", description: "Max time to wait for completion in ms (default: 15000 = 15s). If task isn't done, returns 'in progress' - use comet_poll to check later." },
         newChat: { type: "boolean", description: "Start a fresh conversation (default: false)" },
-        agentic: { type: "boolean", description: "Enable browser control mode - prepends 'Take control of my browser and' to trigger Comet's agentic browsing (default: false)" },
+        timeout: { type: "number", description: "Max wait time in ms (default: 15000 = 15s)" },
       },
       required: ["prompt"],
     },
   },
   {
     name: "comet_poll",
-    description: "Check agent status and get response when done. Use after comet_ask returns 'in progress'. Returns status (working/completed), steps taken, and response if completed.",
+    description: "Check agent status and progress. Call repeatedly to monitor agentic tasks.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -68,13 +45,8 @@ FORMATTING WARNING:
   },
   {
     name: "comet_screenshot",
-    description: "Capture a screenshot of current page or the agent's browsing tab",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agent_tab: { type: "boolean", description: "If true, capture the agent's browsing tab (where it navigated during agentic tasks) instead of the main Perplexity page" },
-      },
-    },
+    description: "Capture a screenshot of current page",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "comet_mode",
@@ -142,19 +114,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "comet_ask": {
         let prompt = args?.prompt as string;
-        const wait = (args?.wait as number) || 15000; // Default 15 seconds initial wait
+        const timeout = (args?.timeout as number) || 15000; // Default 15s, use poll for longer tasks
         const newChat = (args?.newChat as boolean) || false;
-        const agentic = (args?.agentic as boolean) || false;
 
         // Validate prompt
         if (!prompt || prompt.trim().length === 0) {
           return { content: [{ type: "text", text: "Error: prompt cannot be empty" }] };
         }
 
-        // Prepend agentic instruction if requested (official Perplexity recommendation)
-        if (agentic) {
-          prompt = `Take control of my browser and ${prompt}`;
-        }
+        // Normalize prompt - convert markdown/bullets to natural text
+        prompt = prompt
+          .replace(/^[-*•]\s*/gm, '')  // Remove bullet points
+          .replace(/\n+/g, ' ')         // Collapse newlines to spaces
+          .replace(/\s+/g, ' ')         // Collapse multiple spaces
+          .trim();
 
         // For newChat: navigate to Perplexity home for a fresh conversation
         // NOTE: After agentic browsing, call comet_connect first for reliable results
@@ -213,12 +186,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Send the prompt
         await cometAI.sendPrompt(prompt);
 
-        // Wait up to 'wait' ms for completion (non-blocking after that)
+        // Wait for completion
         const startTime = Date.now();
         const stepsCollected: string[] = [];
         let sawNewResponse = false;
 
-        while (Date.now() - startTime < wait) {
+        while (Date.now() - startTime < timeout) {
           await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2s
 
           // Check if we have a NEW response (more prose elements or different text)
@@ -316,30 +289,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "comet_screenshot": {
-        const agentTab = args?.agent_tab as boolean;
-
-        if (agentTab) {
-          // Try to capture the agent's browsing tab
-          const tabs = await cometClient.listTabsCategorized();
-          if (tabs.agentBrowsing) {
-            // Temporarily connect to agent tab, screenshot, reconnect to main
-            const mainTab = tabs.main;
-            await cometClient.connect(tabs.agentBrowsing.id);
-            const result = await cometClient.screenshot("png");
-            if (mainTab) {
-              await cometClient.connect(mainTab.id);
-            }
-            return {
-              content: [
-                { type: "text", text: `Agent browsing: ${tabs.agentBrowsing.url}` },
-                { type: "image", data: result.data, mimeType: "image/png" }
-              ],
-            };
-          } else {
-            return { content: [{ type: "text", text: "No agent browsing tab found" }] };
-          }
-        }
-
         const result = await cometClient.screenshot("png");
         return {
           content: [{ type: "image", data: result.data, mimeType: "image/png" }],
