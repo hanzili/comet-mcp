@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "comet-mcp": "./dist/index.js"
+    "comet-mcp": "dist/index.js"
   },
   "files": [
     "dist",
@@ -34,7 +34,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hanzili/comet-mcp"
+    "url": "git+https://github.com/hanzili/comet-mcp.git"
   },
   "homepage": "https://github.com/hanzili/comet-mcp#readme",
   "bugs": {
