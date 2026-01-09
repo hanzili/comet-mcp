@@ -3,3 +3,8 @@ dist/
 *.log
 .DS_Store
 demo-clear.gif
+
+# Local dev notes
+DEBUG_MEMORY.md
+TEST_PLAN.md
+VISION.md
