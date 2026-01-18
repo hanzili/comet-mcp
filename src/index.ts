@@ -80,29 +80,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Auto-start Comet with debug port (will restart if running without it)
         const startResult = await cometClient.startComet(9222);
 
-        // Get all tabs and clean up - close all except one
+        // Get tab list (NO cleanup - preserve user's existing tabs)
         const targets = await cometClient.listTargets();
-        const pageTabs = targets.filter(t => t.type === 'page');
-
-        // Close extra tabs, keep only one
-        if (pageTabs.length > 1) {
-          for (let i = 1; i < pageTabs.length; i++) {
-            try {
-              await cometClient.closeTab(pageTabs[i].id);
-            } catch { /* ignore */ }
-          }
-        }
-
-        // Get fresh tab list
-        const freshTargets = await cometClient.listTargets();
-        const anyPage = freshTargets.find(t => t.type === 'page');
+        const anyPage = targets.find(t => t.type === 'page');
 
         if (anyPage) {
           await cometClient.connect(anyPage.id);
-          // Always navigate to Perplexity home for clean state
+          // Navigate to Perplexity in the connected tab
           await cometClient.navigate("https://www.perplexity.ai/", true);
           await new Promise(resolve => setTimeout(resolve, 1500));
-          return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)` }] };
+          return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (preserved ${targets.filter(t => t.type === 'page').length} existing tabs)` }] };
         }
 
         // No tabs at all - create a new one
@@ -129,20 +116,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .replace(/\s+/g, ' ')         // Collapse multiple spaces
           .trim();
 
-        // For newChat: full reset (same as comet_connect) to handle post-agentic state
+        // For newChat: navigate to Perplexity home (NO tab cleanup - preserve user's tabs)
         if (newChat) {
-          // Clean up extra tabs (fixes CDP state after agentic browsing)
+          // Connect to first available tab
           const targets = await cometClient.listTargets();
-          const pageTabs = targets.filter(t => t.type === 'page');
-          if (pageTabs.length > 1) {
-            for (let i = 1; i < pageTabs.length; i++) {
-              try { await cometClient.closeTab(pageTabs[i].id); } catch { /* ignore */ }
-            }
-          }
-
-          // Fresh connect to remaining tab
-          const freshTargets = await cometClient.listTargets();
-          const mainTab = freshTargets.find(t => t.type === 'page');
+          const mainTab = targets.find(t => t.type === 'page');
           if (mainTab) {
             await cometClient.connect(mainTab.id);
           }
