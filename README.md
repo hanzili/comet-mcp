@@ -29,6 +29,10 @@ Can interact with pages, but use a **one-agent-do-all** approach: the same reaso
 - **Comet** handles the browsing: navigation, login walls, dynamic content, deep research
 - **Result**: Claude's coding intelligence + Perplexity's web intelligence, working together
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/hanzili-comet-mcp).
+
 ## Quick Start
 
 ### 1. Configure Claude Code
