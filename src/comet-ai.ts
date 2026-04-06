@@ -33,26 +33,46 @@ export class CometAI {
 
   /**
    * Wait until the input element is fully hydrated and functional.
-   * Polls by test-typing a character, verifying it appeared, then clearing.
+   * Uses CDP Input.insertText to test typing (works with React, unlike execCommand).
    */
   async waitForInputReady(maxWaitMs: number = 10000): Promise<void> {
     const startTime = Date.now();
     while (Date.now() - startTime < maxWaitMs) {
-      const ready = await cometClient.safeEvaluate(`
+      // Check element exists and focus it
+      const found = await cometClient.safeEvaluate(`
         (() => {
-          const el = document.querySelector('[contenteditable="true"]');
+          const el = document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
           if (!el) return false;
           el.click();
           el.focus();
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, '\\u200B');
-          const hasText = el.innerText.includes('\\u200B');
-          document.execCommand('selectAll', false, null);
-          document.execCommand('delete', false, null);
-          return hasText;
+          return true;
         })()
       `);
-      if (ready.result.value === true) {
+      if (!found.result.value) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
+
+      // Test typing via CDP insertText (triggers native input events React listens to)
+      await cometClient.insertText('x');
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const hasText = await cometClient.safeEvaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]');
+          if (el && el.innerText.includes('x')) return true;
+          const ta = document.querySelector('textarea');
+          if (ta && ta.value.includes('x')) return true;
+          return false;
+        })()
+      `);
+
+      if (hasText.result.value === true) {
+        // Clean up: Ctrl+A then Backspace via CDP (execCommand doesn't work with React)
+        await cometClient.selectAll();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await cometClient.pressKey('Backspace');
+        await new Promise(resolve => setTimeout(resolve, 50));
         return;
       }
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -62,7 +82,7 @@ export class CometAI {
 
   /**
    * Send a prompt to Comet's AI (Perplexity)
-   * Includes retry logic for when execCommand silently fails during hydration.
+   * Uses CDP Input.insertText to trigger native input events that React listens to.
    */
   async sendPrompt(prompt: string): Promise<string> {
     const inputSelector = await this.findInputElement();
@@ -74,37 +94,42 @@ export class CometAI {
     const MAX_RETRIES = 3;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      // Click and focus to activate React handlers, then type
+      // Click and focus the input element
       await cometClient.safeEvaluate(`
         (() => {
           const el = document.querySelector('[contenteditable="true"]');
           if (el) {
             el.click();
             el.focus();
+            // Clear any existing content
             document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, ${JSON.stringify(prompt)});
-            return { success: true };
+            document.execCommand('delete', false, null);
+            return { success: true, type: 'contenteditable' };
           }
           const textarea = document.querySelector('textarea');
           if (textarea) {
             textarea.click();
             textarea.focus();
-            textarea.value = ${JSON.stringify(prompt)};
+            textarea.value = '';
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
-            return { success: true };
+            return { success: true, type: 'textarea' };
           }
           return { success: false };
         })()
       `);
 
+      // Use CDP Input.insertText — triggers native textInput events React listens to
+      await cometClient.insertText(prompt);
+
       // Verify the text actually appeared in the input
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 300));
       const verifyResult = await cometClient.safeEvaluate(`
         (() => {
+          const strip = s => s.replace(/[\\u200B\\u200C\\u200D\\uFEFF]/g, '').trim();
           const el = document.querySelector('[contenteditable="true"]');
-          if (el && el.innerText.trim().length > 0) return el.innerText.trim();
+          if (el && strip(el.innerText).length > 0) return strip(el.innerText);
           const textarea = document.querySelector('textarea');
-          if (textarea && textarea.value.trim().length > 0) return textarea.value.trim();
+          if (textarea && strip(textarea.value).length > 0) return strip(textarea.value);
           return '';
         })()
       `);

@@ -7,6 +7,8 @@ vi.mock('../src/cdp-client.js', () => {
       evaluate: vi.fn(),
       safeEvaluate: vi.fn(),
       pressKey: vi.fn(),
+      insertText: vi.fn(),
+      selectAll: vi.fn(),
       listTabsCategorized: vi.fn().mockResolvedValue({
         main: null,
         sidecar: null,
@@ -23,6 +25,8 @@ import { cometClient } from '../src/cdp-client.js';
 
 const mockSafeEvaluate = cometClient.safeEvaluate as ReturnType<typeof vi.fn>;
 const mockPressKey = cometClient.pressKey as ReturnType<typeof vi.fn>;
+const mockInsertText = (cometClient as any).insertText as ReturnType<typeof vi.fn>;
+const mockSelectAll = (cometClient as any).selectAll as ReturnType<typeof vi.fn>;
 
 describe('CometAI', () => {
   let ai: CometAI;
@@ -31,6 +35,8 @@ describe('CometAI', () => {
     ai = new CometAI();
     vi.clearAllMocks();
     mockPressKey.mockResolvedValue(undefined);
+    mockInsertText.mockResolvedValue(undefined);
+    mockSelectAll.mockResolvedValue(undefined);
   });
 
   // ==========================================
@@ -38,22 +44,22 @@ describe('CometAI', () => {
   // ==========================================
 
   describe('sendPrompt', () => {
-    it('retries when execCommand silently fails (innerText empty)', async () => {
+    it('retries when CDP insertText fails (innerText empty)', async () => {
       // findInputElement: contenteditable exists
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: true } });
 
-      // Attempt 1: type (execCommand runs), verify (empty), clear
-      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true } } }); // type
+      // Attempt 1: focus/clear, (insertText via CDP mock), verify (empty), clear
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true, type: 'contenteditable' } } }); // focus
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: '' } }); // verify empty
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: undefined } }); // clear
 
-      // Attempt 2: type, verify (empty), clear
-      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true } } }); // type
+      // Attempt 2: focus/clear, insertText, verify (empty), clear
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true, type: 'contenteditable' } } }); // focus
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: '' } }); // verify empty
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: undefined } }); // clear
 
-      // Attempt 3: type, verify (success!)
-      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true } } }); // type
+      // Attempt 3: focus/clear, insertText, verify (success!)
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true, type: 'contenteditable' } } }); // focus
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: 'hello world' } }); // verify has text
 
       // submitPrompt flow: content check → true, focus, enter, verify submitted
@@ -63,15 +69,16 @@ describe('CometAI', () => {
 
       const result = await ai.sendPrompt('hello world');
       expect(result).toContain('Prompt sent');
+      expect(mockInsertText).toHaveBeenCalledTimes(3);
     });
 
     it('throws after max retries when typing always fails', async () => {
       // findInputElement: contenteditable exists
       mockSafeEvaluate.mockResolvedValueOnce({ result: { value: true } });
 
-      // All 3 attempts: type succeeds, verify returns empty, clear runs
+      // All 3 attempts: focus/clear, (insertText via CDP), verify returns empty, clear
       for (let i = 0; i < 3; i++) {
-        mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true } } }); // type
+        mockSafeEvaluate.mockResolvedValueOnce({ result: { value: { success: true, type: 'contenteditable' } } }); // focus
         mockSafeEvaluate.mockResolvedValueOnce({ result: { value: '' } }); // verify empty
         if (i < 2) {
           mockSafeEvaluate.mockResolvedValueOnce({ result: { value: undefined } }); // clear (not on last attempt)
@@ -84,19 +91,21 @@ describe('CometAI', () => {
 
   describe('waitForInputReady', () => {
     it('polls until input is functional', async () => {
-      // First 3 polls: input not ready (test-type fails)
-      for (let i = 0; i < 3; i++) {
-        mockSafeEvaluate.mockResolvedValueOnce({ result: { value: false } });
-      }
-      // 4th poll: input is ready
-      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: true } });
+      // First 2 polls: element not found
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: false } });
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: false } });
+
+      // 3rd poll: element found + focused
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: true } }); // found
+      // insertText('x') via CDP mock — already mocked
+      mockSafeEvaluate.mockResolvedValueOnce({ result: { value: true } }); // hasText check
+      // Cleanup: selectAll + Backspace via CDP mocks (no safeEvaluate calls)
 
       await expect(ai.waitForInputReady(5000)).resolves.toBeUndefined();
-      expect(mockSafeEvaluate).toHaveBeenCalledTimes(4);
     });
 
     it('times out with clear error', async () => {
-      // Input never becomes ready
+      // Input never becomes ready (element not found)
       mockSafeEvaluate.mockResolvedValue({ result: { value: false } });
 
       await expect(ai.waitForInputReady(1500)).rejects.toThrow(/input.*ready|hydrat|timeout/i);

@@ -750,6 +750,37 @@ export class CometCDPClient {
   }
 
   /**
+   * Insert text as if typed (triggers native input events that React listens to).
+   * Uses CDP Input.insertText which synthesizes a textInput event.
+   */
+  async insertText(text: string): Promise<void> {
+    this.ensureConnected();
+    await (this.client!.Input as any).insertText({ text });
+  }
+
+  /**
+   * Select all text in the focused element (Ctrl+A / Cmd+A).
+   */
+  async selectAll(): Promise<void> {
+    this.ensureConnected();
+    // Use Ctrl+A (windowsVirtualKeyCode 65, modifiers 2 = Ctrl)
+    await this.client!.Input.dispatchKeyEvent({
+      type: "keyDown",
+      key: "a",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+      modifiers: 2, // Ctrl
+    });
+    await this.client!.Input.dispatchKeyEvent({
+      type: "keyUp",
+      key: "a",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+      modifiers: 2,
+    });
+  }
+
+  /**
    * Create a new tab
    */
   async newTab(url?: string): Promise<CDPTarget> {
