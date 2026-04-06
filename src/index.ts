@@ -101,7 +101,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           await cometClient.connect(anyPage.id);
           // Always navigate to Perplexity home for clean state
           await cometClient.navigate("https://www.perplexity.ai/", true);
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await cometAI.waitForInputReady();
           return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)` }] };
         }
 
@@ -147,9 +147,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             await cometClient.connect(mainTab.id);
           }
 
-          // Navigate to Perplexity home
+          // Navigate to Perplexity home and wait for input to be ready
           await cometClient.navigate("https://www.perplexity.ai/", true);
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await cometAI.waitForInputReady();
         } else {
           // Not newChat - just ensure we're on Perplexity
           const tabs = await cometClient.listTabsCategorized();
@@ -157,18 +157,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             await cometClient.connect(tabs.main.id);
           }
 
-          const urlResult = await cometClient.evaluate('window.location.href');
+          const urlResult = await cometClient.safeEvaluate('window.location.href');
           const currentUrl = urlResult.result.value as string;
           const isOnPerplexity = currentUrl?.includes('perplexity.ai');
 
           if (!isOnPerplexity) {
             await cometClient.navigate("https://www.perplexity.ai/", true);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await cometAI.waitForInputReady();
           }
         }
 
         // Capture old response state BEFORE sending prompt (for follow-up detection)
-        const oldStateResult = await cometClient.evaluate(`
+        const oldStateResult = await cometClient.safeEvaluate(`
           (() => {
             const proseEls = document.querySelectorAll('[class*="prose"]');
             const lastProse = proseEls[proseEls.length - 1];
@@ -191,39 +191,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         while (Date.now() - startTime < timeout) {
           await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2s
 
-          // Check if we have a NEW response (more prose elements or different text)
-          const currentStateResult = await cometClient.evaluate(`
-            (() => {
-              const proseEls = document.querySelectorAll('[class*="prose"]');
-              const lastProse = proseEls[proseEls.length - 1];
-              return {
-                count: proseEls.length,
-                lastText: lastProse ? lastProse.innerText.substring(0, 100) : ''
-              };
-            })()
-          `);
-          const currentState = currentStateResult.result.value as { count: number; lastText: string };
+          try {
+            // Check if we have a NEW response (more prose elements or different text)
+            const currentStateResult = await cometClient.safeEvaluate(`
+              (() => {
+                const proseEls = document.querySelectorAll('[class*="prose"]');
+                const lastProse = proseEls[proseEls.length - 1];
+                return {
+                  count: proseEls.length,
+                  lastText: lastProse ? lastProse.innerText.substring(0, 100) : ''
+                };
+              })()
+            `);
+            const currentState = currentStateResult.result.value as { count: number; lastText: string };
 
-          // Detect new response
-          if (!sawNewResponse) {
-            if (currentState.count > oldState.count ||
-                (currentState.lastText && currentState.lastText !== oldState.lastText)) {
-              sawNewResponse = true;
+            // Detect new response
+            if (!sawNewResponse) {
+              if (currentState.count > oldState.count ||
+                  (currentState.lastText && currentState.lastText !== oldState.lastText)) {
+                sawNewResponse = true;
+              }
             }
-          }
 
-          const status = await cometAI.getAgentStatus();
+            const status = await cometAI.getAgentStatus();
 
-          // Collect steps
-          for (const step of status.steps) {
-            if (!stepsCollected.includes(step)) {
-              stepsCollected.push(step);
+            // Collect steps
+            for (const step of status.steps) {
+              if (!stepsCollected.includes(step)) {
+                stepsCollected.push(step);
+              }
             }
-          }
 
-          // Task completed - return result directly (but only if we saw a NEW response)
-          if (status.status === 'completed' && sawNewResponse) {
-            return { content: [{ type: "text", text: status.response || 'Task completed (no response text extracted)' }] };
+            // Task completed - return result directly (but only if we saw a NEW response)
+            if (status.status === 'completed' && sawNewResponse) {
+              return { content: [{ type: "text", text: status.response || 'Task completed (no response text extracted)' }] };
+            }
+          } catch {
+            // CDP connection lost — likely agent is browsing an external site
+            // Wait longer and check if agent is still active via HTTP
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            try {
+              await cometClient.reconnect();
+            } catch {
+              // Reconnect failed — check if agent is still browsing via HTTP fallback
+              try {
+                const browsing = await cometClient.isAgentBrowsing();
+                if (browsing.browsing) {
+                  // Agent is still browsing, continue waiting
+                  continue;
+                }
+              } catch {
+                // Even HTTP failed, continue polling
+                continue;
+              }
+            }
           }
         }
 
