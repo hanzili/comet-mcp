@@ -13,12 +13,15 @@ const INPUT_SELECTORS = [
 ];
 
 export class CometAI {
+  // Track step counts for stale detection (Bug 3)
+  private lastStepCount: number = 0;
+  private lastStepChangeTime: number = Date.now();
   /**
    * Find the first matching element from a list of selectors
    */
   private async findInputElement(): Promise<string | null> {
     for (const selector of INPUT_SELECTORS) {
-      const result = await cometClient.evaluate(`
+      const result = await cometClient.safeEvaluate(`
         document.querySelector(${JSON.stringify(selector)}) !== null
       `);
       if (result.result.value === true) {
@@ -29,7 +32,57 @@ export class CometAI {
   }
 
   /**
+   * Wait until the input element is fully hydrated and functional.
+   * Uses CDP Input.insertText to test typing (works with React, unlike execCommand).
+   */
+  async waitForInputReady(maxWaitMs: number = 10000): Promise<void> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWaitMs) {
+      // Check element exists and focus it
+      const found = await cometClient.safeEvaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+          if (!el) return false;
+          el.click();
+          el.focus();
+          return true;
+        })()
+      `);
+      if (!found.result.value) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
+
+      // Test typing via CDP insertText (triggers native input events React listens to)
+      await cometClient.insertText('x');
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const hasText = await cometClient.safeEvaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]');
+          if (el && el.innerText.includes('x')) return true;
+          const ta = document.querySelector('textarea');
+          if (ta && ta.value.includes('x')) return true;
+          return false;
+        })()
+      `);
+
+      if (hasText.result.value === true) {
+        // Clean up: Ctrl+A then Backspace via CDP (execCommand doesn't work with React)
+        await cometClient.selectAll();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        await cometClient.pressKey('Backspace');
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    throw new Error("Input not ready after timeout - React may not have hydrated");
+  }
+
+  /**
    * Send a prompt to Comet's AI (Perplexity)
+   * Uses CDP Input.insertText to trigger native input events that React listens to.
    */
   async sendPrompt(prompt: string): Promise<string> {
     const inputSelector = await this.findInputElement();
@@ -38,37 +91,73 @@ export class CometAI {
       throw new Error("Could not find input element. Navigate to Perplexity first.");
     }
 
-    // Use execCommand for contenteditable elements (works with React/Vue)
-    const result = await cometClient.evaluate(`
-      (() => {
-        const el = document.querySelector('[contenteditable="true"]');
-        if (el) {
-          el.focus();
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, ${JSON.stringify(prompt)});
-          return { success: true };
-        }
-        // Fallback for textarea
-        const textarea = document.querySelector('textarea');
-        if (textarea) {
-          textarea.focus();
-          textarea.value = ${JSON.stringify(prompt)};
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          return { success: true };
-        }
-        return { success: false };
-      })()
-    `);
+    const MAX_RETRIES = 3;
 
-    const typed = (result.result.value as { success: boolean })?.success;
-    if (!typed) {
-      throw new Error("Failed to type into input element");
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // Click and focus the input element
+      await cometClient.safeEvaluate(`
+        (() => {
+          const el = document.querySelector('[contenteditable="true"]');
+          if (el) {
+            el.click();
+            el.focus();
+            // Clear any existing content
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+            return { success: true, type: 'contenteditable' };
+          }
+          const textarea = document.querySelector('textarea');
+          if (textarea) {
+            textarea.click();
+            textarea.focus();
+            textarea.value = '';
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            return { success: true, type: 'textarea' };
+          }
+          return { success: false };
+        })()
+      `);
+
+      // Use CDP Input.insertText — triggers native textInput events React listens to
+      await cometClient.insertText(prompt);
+
+      // Verify the text actually appeared in the input
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const verifyResult = await cometClient.safeEvaluate(`
+        (() => {
+          const strip = s => s.replace(/[\\u200B\\u200C\\u200D\\uFEFF]/g, '').trim();
+          const el = document.querySelector('[contenteditable="true"]');
+          if (el && strip(el.innerText).length > 0) return strip(el.innerText);
+          const textarea = document.querySelector('textarea');
+          if (textarea && strip(textarea.value).length > 0) return strip(textarea.value);
+          return '';
+        })()
+      `);
+
+      const typedText = verifyResult.result.value as string;
+      if (typedText && typedText.length > 0) {
+        // Text was typed successfully — submit
+        await this.submitPrompt();
+        return `Prompt sent: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`;
+      }
+
+      // Text didn't appear — clear and retry
+      if (attempt < MAX_RETRIES - 1) {
+        await cometClient.safeEvaluate(`
+          (() => {
+            const el = document.querySelector('[contenteditable="true"]');
+            if (el) {
+              el.focus();
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            }
+          })()
+        `);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     }
 
-    // Submit the prompt
-    await this.submitPrompt();
-
-    return `Prompt sent: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`;
+    throw new Error("Failed to type into input after " + MAX_RETRIES + " retries - typing may have failed");
   }
 
   /**
@@ -79,7 +168,7 @@ export class CometAI {
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Verify text was typed before attempting submit
-    const hasContent = await cometClient.evaluate(`
+    const hasContent = await cometClient.safeEvaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]');
         if (el && el.innerText.trim().length > 0) return true;
@@ -94,7 +183,7 @@ export class CometAI {
     }
 
     // Strategy 1: Use Enter key (most reliable for Perplexity)
-    await cometClient.evaluate(`
+    await cometClient.safeEvaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]') ||
                    document.querySelector('textarea');
@@ -105,7 +194,7 @@ export class CometAI {
     await new Promise(resolve => setTimeout(resolve, 500));
 
     // Check if submission worked
-    const submitted = await cometClient.evaluate(`
+    const submitted = await cometClient.safeEvaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]');
         if (el && el.innerText.trim().length < 5) return true;
@@ -116,7 +205,7 @@ export class CometAI {
     if (submitted.result.value) return;
 
     // Strategy 2: Click submit button
-    await cometClient.evaluate(`
+    await cometClient.safeEvaluate(`
       (() => {
         const selectors = [
           'button[aria-label*="Submit"]',
@@ -172,7 +261,7 @@ export class CometAI {
 
     // Final check and retry with Enter if still not submitted
     await new Promise(resolve => setTimeout(resolve, 500));
-    const finalCheck = await cometClient.evaluate(`
+    const finalCheck = await cometClient.safeEvaluate(`
       (() => {
         const el = document.querySelector('[contenteditable="true"]');
         if (el && el.innerText.trim().length < 5) return true;
@@ -214,15 +303,31 @@ export class CometAI {
       (() => {
         const body = document.body.innerText;
 
-        // Check for active stop button
+        // Check for active stop button (tightened detection)
         let hasActiveStopButton = false;
         for (const btn of document.querySelectorAll('button')) {
-          const rect = btn.querySelector('rect');
           const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-          if ((rect || ariaLabel.includes('stop')) &&
-              btn.offsetParent !== null && !btn.disabled) {
+
+          // Skip known non-stop buttons
+          if (ariaLabel.includes('copy') || ariaLabel.includes('share') ||
+              ariaLabel.includes('like') || ariaLabel.includes('dislike') ||
+              ariaLabel.includes('source') || ariaLabel.includes('download')) continue;
+
+          // Primary: aria-label explicitly says stop
+          if (ariaLabel.includes('stop') && btn.offsetParent !== null && !btn.disabled) {
             hasActiveStopButton = true;
             break;
+          }
+
+          // Secondary: square icon (sharp-cornered rect) near input area
+          const rect = btn.querySelector('rect:not([rx])');
+          if (rect && btn.offsetParent !== null && !btn.disabled) {
+            const btnRect = btn.getBoundingClientRect();
+            // Only count if in the lower 25% of viewport (near input)
+            if (btnRect.top > window.innerHeight * 0.75) {
+              hasActiveStopButton = true;
+              break;
+            }
           }
         }
 
@@ -235,24 +340,51 @@ export class CometAI {
           el => el.innerText.trim().length > 0
         );
 
+        // Check working patterns only OUTSIDE prose elements
         const workingPatterns = [
           'Working', 'Searching', 'Reviewing sources', 'Preparing to assist',
           'Clicking', 'Typing:', 'Navigating to', 'Reading', 'Analyzing'
         ];
-        const hasWorkingText = workingPatterns.some(p => body.includes(p));
+        const proseEls = new Set([...document.querySelectorAll('[class*="prose"]')]);
+        let hasWorkingText = false;
+        for (const el of document.querySelectorAll('div, span, p')) {
+          // Skip if inside a prose element (completed response content)
+          let insideProse = false;
+          let parent = el;
+          while (parent) {
+            if (proseEls.has(parent)) { insideProse = true; break; }
+            parent = parent.parentElement;
+          }
+          if (insideProse) continue;
 
-        // Determine status
+          const text = el.innerText || '';
+          if (workingPatterns.some(p => text.includes(p))) {
+            hasWorkingText = true;
+            break;
+          }
+        }
+
+        // Determine status — PRIORITY ORDER MATTERS
         let status = 'idle';
-        if (hasActiveStopButton || hasLoadingSpinner) {
+
+        // HIGHEST PRIORITY: "Ask a follow-up" is the definitive completion signal
+        if (hasAskFollowUp && hasProseContent && !hasActiveStopButton) {
+          status = 'completed';
+        }
+        // Active stop button or loading spinner = still working
+        else if (hasActiveStopButton || hasLoadingSpinner) {
           status = 'working';
-        } else if (hasStepsCompleted || hasFinishedMarker) {
+        }
+        // Step completion markers
+        else if (hasStepsCompleted || hasFinishedMarker) {
           status = 'completed';
-        } else if (hasReviewedSources && !hasWorkingText) {
+        }
+        else if (hasReviewedSources && !hasWorkingText) {
           status = 'completed';
-        } else if (hasWorkingText) {
+        }
+        // Working text (only outside prose)
+        else if (hasWorkingText) {
           status = 'working';
-        } else if (hasAskFollowUp && hasProseContent && !hasActiveStopButton) {
-          status = 'completed';
         }
 
         // Extract steps
@@ -300,19 +432,44 @@ export class CometAI {
           steps: [...new Set(steps)].slice(-5),
           currentStep: steps.length > 0 ? steps[steps.length - 1] : '',
           response: response.substring(0, 8000),
-          hasStopButton: hasActiveStopButton
+          hasStopButton: hasActiveStopButton,
+          hasAskFollowUp
         };
       })()
     `);
 
+    const evalResult = result.result.value as {
+      status: "idle" | "working" | "completed";
+      steps: string[];
+      currentStep: string;
+      response: string;
+      hasStopButton: boolean;
+      hasAskFollowUp: boolean;
+    };
+
+    // Step stale detection: if steps haven't changed in 30s and completion signals are present, override to completed
+    if (evalResult.steps.length !== this.lastStepCount) {
+      this.lastStepCount = evalResult.steps.length;
+      this.lastStepChangeTime = Date.now();
+    }
+    const staleMs = Date.now() - this.lastStepChangeTime;
+    if (evalResult.status === 'working' && staleMs > 30000 && evalResult.hasAskFollowUp) {
+      evalResult.status = 'completed';
+    }
+
+    // Post-evaluation override: if no agent tabs and completion signals, mark completed
+    if (evalResult.status === 'working' && !agentBrowsingUrl) {
+      if (evalResult.hasAskFollowUp) {
+        evalResult.status = 'completed';
+      }
+    }
+
     return {
-      ...(result.result.value as {
-        status: "idle" | "working" | "completed";
-        steps: string[];
-        currentStep: string;
-        response: string;
-        hasStopButton: boolean;
-      }),
+      status: evalResult.status,
+      steps: evalResult.steps,
+      currentStep: evalResult.currentStep,
+      response: evalResult.response,
+      hasStopButton: evalResult.hasStopButton,
       agentBrowsingUrl,
     };
   }
@@ -321,7 +478,7 @@ export class CometAI {
    * Stop the current agent task
    */
   async stopAgent(): Promise<boolean> {
-    const result = await cometClient.evaluate(`
+    const result = await cometClient.safeEvaluate(`
       (() => {
         // Try aria-label buttons first
         for (const btn of document.querySelectorAll('button[aria-label*="Stop"], button[aria-label*="Cancel"]')) {

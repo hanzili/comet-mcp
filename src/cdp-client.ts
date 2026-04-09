@@ -255,7 +255,8 @@ export class CometCDPClient {
   }
 
   /**
-   * Reconnect to the last connected tab
+   * Reconnect to the last connected tab.
+   * Includes a settle delay to let tab operations complete before reconnecting.
    */
   async reconnect(): Promise<string> {
     if (this.client) {
@@ -263,6 +264,9 @@ export class CometCDPClient {
     }
     this.state.connected = false;
     this.client = null;
+
+    // Settle delay — tab operations (open/close) need time to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Verify Comet is running
     try {
@@ -276,23 +280,27 @@ export class CometCDPClient {
       }
     }
 
-    // Try to reconnect to last target
-    if (this.lastTargetId) {
-      try {
-        const targets = await this.listTargets();
-        if (targets.find(t => t.id === this.lastTargetId)) {
-          return await this.connect(this.lastTargetId);
-        }
-      } catch { /* target gone */ }
+    // Use retry-tolerant target listing
+    const targets = await this.listTargetsWithRetry();
+
+    // Primary strategy: find Perplexity tab by URL (target IDs change during tab operations)
+    const perplexityTab = targets.find(t => t.type === 'page' && t.url.includes('perplexity.ai'));
+    if (perplexityTab) {
+      return await this.connect(perplexityTab.id);
     }
 
-    // Find best target
-    const targets = await this.listTargets();
-    const target = targets.find(t => t.type === 'page' && t.url.includes('perplexity.ai')) ||
-                   targets.find(t => t.type === 'page' && t.url !== 'about:blank');
+    // Fallback: try last known target ID
+    if (this.lastTargetId) {
+      const lastTarget = targets.find(t => t.id === this.lastTargetId);
+      if (lastTarget) {
+        return await this.connect(this.lastTargetId);
+      }
+    }
 
-    if (target) {
-      return await this.connect(target.id);
+    // Last resort: any non-blank page
+    const anyPage = targets.find(t => t.type === 'page' && t.url !== 'about:blank');
+    if (anyPage) {
+      return await this.connect(anyPage.id);
     }
 
     throw new Error('No suitable tab found for reconnection');
@@ -573,6 +581,48 @@ export class CometCDPClient {
   }
 
   /**
+   * List targets with retry logic for transient failures.
+   * HTTP calls to the debug port can fail during tab operations.
+   */
+  async listTargetsWithRetry(maxAttempts: number = 3, delayMs: number = 1000): Promise<CDPTarget[]> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await this.listTargets();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+    throw lastError || new Error('Failed to list targets after retries');
+  }
+
+  /**
+   * Check if the agent is actively browsing an external site.
+   * Uses HTTP-only (no WebSocket) so it works even when CDP connection is dead.
+   */
+  async isAgentBrowsing(): Promise<{ browsing: boolean; url: string | null }> {
+    try {
+      const targets = await this.listTargetsWithRetry();
+      const externalTab = targets.find(t =>
+        t.type === 'page' &&
+        !t.url.includes('perplexity.ai') &&
+        !t.url.includes('chrome-extension') &&
+        !t.url.includes('chrome://') &&
+        t.url !== 'about:blank'
+      );
+      return {
+        browsing: !!externalTab,
+        url: externalTab?.url ?? null,
+      };
+    } catch {
+      return { browsing: false, url: null };
+    }
+  }
+
+  /**
    * Connect to a specific tab
    */
   async connect(targetId?: string): Promise<string> {
@@ -587,6 +637,14 @@ export class CometCDPClient {
     if (targetId) options.target = targetId;
 
     this.client = await CDP(options);
+
+    // Proactively detect WebSocket death instead of waiting for next operation to fail
+    const ws = (this.client as any)._ws || (this.client as any).webSocket;
+    if (ws) {
+      ws.on('close', () => {
+        this.state.connected = false;
+      });
+    }
 
     await Promise.all([
       this.client.Page.enable(),
@@ -689,6 +747,37 @@ export class CometCDPClient {
     this.ensureConnected();
     await this.client!.Input.dispatchKeyEvent({ type: "keyDown", key });
     await this.client!.Input.dispatchKeyEvent({ type: "keyUp", key });
+  }
+
+  /**
+   * Insert text as if typed (triggers native input events that React listens to).
+   * Uses CDP Input.insertText which synthesizes a textInput event.
+   */
+  async insertText(text: string): Promise<void> {
+    this.ensureConnected();
+    await (this.client!.Input as any).insertText({ text });
+  }
+
+  /**
+   * Select all text in the focused element (Ctrl+A / Cmd+A).
+   */
+  async selectAll(): Promise<void> {
+    this.ensureConnected();
+    // Use Ctrl+A (windowsVirtualKeyCode 65, modifiers 2 = Ctrl)
+    await this.client!.Input.dispatchKeyEvent({
+      type: "keyDown",
+      key: "a",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+      modifiers: 2, // Ctrl
+    });
+    await this.client!.Input.dispatchKeyEvent({
+      type: "keyUp",
+      key: "a",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+      modifiers: 2,
+    });
   }
 
   /**
