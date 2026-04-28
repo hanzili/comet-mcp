@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/hanzili-comet-mcp-badge.png)](https://mseep.ai/app/hanzili-comet-mcp)
+
 # comet-mcp
 
 [![npm version](https://img.shields.io/npm/v/comet-mcp.svg)](https://www.npmjs.com/package/comet-mcp)
