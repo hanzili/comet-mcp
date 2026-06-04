@@ -80,36 +80,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Auto-start Comet with debug port (will restart if running without it)
         const startResult = await cometClient.startComet(9222);
 
-        // Get all tabs and clean up - close all except one
-        const targets = await cometClient.listTargets();
-        const pageTabs = targets.filter(t => t.type === 'page');
+        // Preserve all existing tabs — do NOT close anything on startup
+        const tabs = await cometClient.listTabsCategorized();
 
-        // Close extra tabs, keep only one
-        if (pageTabs.length > 1) {
-          for (let i = 1; i < pageTabs.length; i++) {
-            try {
-              await cometClient.closeTab(pageTabs[i].id);
-            } catch { /* ignore */ }
-          }
-        }
-
-        // Get fresh tab list
-        const freshTargets = await cometClient.listTargets();
-        const anyPage = freshTargets.find(t => t.type === 'page');
-
-        if (anyPage) {
-          await cometClient.connect(anyPage.id);
-          // Always navigate to Perplexity home for clean state
-          await cometClient.navigate("https://www.perplexity.ai/", true);
+        if (tabs.main) {
+          // Reuse the existing Perplexity tab without disturbing other tabs
+          await cometClient.connect(tabs.main.id);
           await new Promise(resolve => setTimeout(resolve, 1500));
-          return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)` }] };
+          const openTabs = (await cometClient.listTargets()).filter(t => t.type === 'page').length;
+          return { content: [{ type: "text", text: `${startResult}\nConnected to existing Perplexity tab (${openTabs} tabs preserved)` }] };
         }
 
-        // No tabs at all - create a new one
+        // No Perplexity tab open — create a fresh one, leaving other tabs untouched
         const newTab = await cometClient.newTab("https://www.perplexity.ai/");
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for page load
         await cometClient.connect(newTab.id);
-        return { content: [{ type: "text", text: `${startResult}\nCreated new tab and navigated to Perplexity` }] };
+        return { content: [{ type: "text", text: `${startResult}\nOpened new Perplexity tab (tabs preserved)` }] };
       }
 
       case "comet_ask": {
@@ -129,22 +115,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .replace(/\s+/g, ' ')         // Collapse multiple spaces
           .trim();
 
-        // For newChat: full reset (same as comet_connect) to handle post-agentic state
+        // For newChat: start a fresh Perplexity chat WITHOUT closing other tabs
         if (newChat) {
-          // Clean up extra tabs (fixes CDP state after agentic browsing)
-          const targets = await cometClient.listTargets();
-          const pageTabs = targets.filter(t => t.type === 'page');
-          if (pageTabs.length > 1) {
-            for (let i = 1; i < pageTabs.length; i++) {
-              try { await cometClient.closeTab(pageTabs[i].id); } catch { /* ignore */ }
-            }
-          }
-
-          // Fresh connect to remaining tab
-          const freshTargets = await cometClient.listTargets();
-          const mainTab = freshTargets.find(t => t.type === 'page');
-          if (mainTab) {
-            await cometClient.connect(mainTab.id);
+          // Reuse existing Perplexity tab, or open a new one — never close user's tabs
+          const tabs = await cometClient.listTabsCategorized();
+          if (tabs.main) {
+            await cometClient.connect(tabs.main.id);
+          } else {
+            const freshTab = await cometClient.newTab("https://www.perplexity.ai/");
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            await cometClient.connect(freshTab.id);
           }
 
           // Navigate to Perplexity home
