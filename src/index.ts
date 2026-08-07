@@ -13,6 +13,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { cometClient } from "./cdp-client.js";
 import { cometAI } from "./comet-ai.js";
+import { formatCaughtError, isDebugEnabled } from "./util/format.js";
+import {
+  getActivePolicy,
+  setActivePolicy,
+  resetActivePolicy,
+  normalizePolicy,
+  type UrlPolicy,
+} from "./safety/url-policy.js";
+import { getAuditLog } from "./safety/audit-log.js";
 
 const TOOLS: Tool[] = [
   {
@@ -62,6 +71,43 @@ const TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "comet_get_url_policy",
+    description: "Read the active URL policy. Mirrors Comet-agent's isInternalPage / isUrlBlocked / isDomainBlacklist checks. Shows blockInternal, blockFile, blockDangerousExtensions, and the optional allow/deny domain lists.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "comet_set_url_policy",
+    description: "Set or reset the URL policy that gates every navigation and tab-open. Pass any of blockInternal / blockFile / blockDangerousExtensions / domainAllowlist / domainDenylist to update; omit all to reset to defaults. Or set reset:true to restore defaults.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        blockInternal: { type: "boolean", description: "Block chrome://, edge://, devtools://, etc. Default false." },
+        blockFile: { type: "boolean", description: "Block file:// and ftp://. Default true." },
+        blockDangerousExtensions: { type: "boolean", description: "Block URLs ending with executable extensions (.exe, .sh, .dmg, etc). Default true." },
+        domainAllowlist: { type: "array", items: { type: "string" }, description: "Wildcard domains allowed (e.g. ['*.mycompany.com']). If set and non-empty, ONLY these are allowed." },
+        domainDenylist: { type: "array", items: { type: "string" }, description: "Wildcard domains always blocked. Wins over allowlist." },
+        reset: { type: "boolean", description: "If true, restore all flags to defaults and clear the lists." },
+      },
+    },
+  },
+  {
+    name: "comet_get_audit_log",
+    description: "Read the URL-policy audit log (most recent decisions, newest first). Optional limit and outcome filter (allow|deny).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Maximum number of entries to return (default 50)" },
+        outcome: { type: "string", enum: ["allow", "deny"], description: "Optional filter by outcome" },
+        caller: { type: "string", description: "Optional filter by MCP tool name (exact match)" },
+      },
+    },
+  },
+  {
+    name: "comet_reset_audit_log",
+    description: "Clear the URL-policy audit log. Use this after diagnosing a blocked-navigation report to start fresh.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 const server = new Server(
@@ -100,13 +146,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (anyPage) {
           await cometClient.connect(anyPage.id);
           // Always navigate to Perplexity home for clean state
-          await cometClient.navigate("https://www.perplexity.ai/", true);
+          await cometClient.navigate("https://www.perplexity.ai/", true, "comet_connect");
           await new Promise(resolve => setTimeout(resolve, 1500));
           return { content: [{ type: "text", text: `${startResult}\nConnected to Perplexity (cleaned ${pageTabs.length - 1} old tabs)` }] };
         }
 
         // No tabs at all - create a new one
-        const newTab = await cometClient.newTab("https://www.perplexity.ai/");
+        const newTab = await cometClient.newTab("https://www.perplexity.ai/", "comet_connect");
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for page load
         await cometClient.connect(newTab.id);
         return { content: [{ type: "text", text: `${startResult}\nCreated new tab and navigated to Perplexity` }] };
@@ -148,7 +194,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           // Navigate to Perplexity home
-          await cometClient.navigate("https://www.perplexity.ai/", true);
+          await cometClient.navigate("https://www.perplexity.ai/", true, "comet_ask");
           await new Promise(resolve => setTimeout(resolve, 1500));
         } else {
           // Not newChat - just ensure we're on Perplexity
@@ -162,7 +208,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const isOnPerplexity = currentUrl?.includes('perplexity.ai');
 
           if (!isOnPerplexity) {
-            await cometClient.navigate("https://www.perplexity.ai/", true);
+            await cometClient.navigate("https://www.perplexity.ai/", true, "comet_ask");
             await new Promise(resolve => setTimeout(resolve, 2000));
           }
         }
@@ -421,16 +467,117 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
+      case "comet_get_url_policy": {
+        const p = getActivePolicy();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(p, null, 2),
+          }],
+        };
+      }
+
+      case "comet_set_url_policy": {
+        const reset = args?.reset === true;
+        if (reset) {
+          resetActivePolicy();
+          const p = getActivePolicy();
+          return {
+            content: [{
+              type: "text",
+              text: `URL policy reset to defaults.
+${JSON.stringify(p, null, 2)}`,
+            }],
+          };
+        }
+        // Build the next policy from the current one, overriding any
+        // fields the caller supplied. Undefined values are left alone
+        // so partial updates work.
+        const current = getActivePolicy();
+        const next: UrlPolicy = {
+          ...current,
+          ...(typeof args?.blockInternal === 'boolean' ? { blockInternal: args.blockInternal } : {}),
+          ...(typeof args?.blockFile === 'boolean' ? { blockFile: args.blockFile } : {}),
+          ...(typeof args?.blockDangerousExtensions === 'boolean' ? { blockDangerousExtensions: args.blockDangerousExtensions } : {}),
+          ...(Array.isArray(args?.domainAllowlist) ? { domainAllowlist: args.domainAllowlist as string[] } : {}),
+          ...(Array.isArray(args?.domainDenylist) ? { domainDenylist: args.domainDenylist as string[] } : {}),
+        };
+        const normalized = normalizePolicy(next);
+        setActivePolicy(normalized);
+        return {
+          content: [{
+            type: "text",
+            text: `URL policy updated.
+${JSON.stringify(getActivePolicy(), null, 2)}`,
+          }],
+        };
+      }
+
+      case "comet_get_audit_log": {
+        const limit = Math.max(1, Math.min(500, (args?.limit as number) ?? 50));
+        const outcome = args?.outcome as string | undefined;
+        const caller = args?.caller as string | undefined;
+        let entries = getAuditLog().recent(limit);
+        if (outcome === "allow" || outcome === "deny") {
+          entries = entries.filter((e) => e.outcome === outcome);
+        }
+        if (caller) {
+          entries = entries.filter((e) => e.caller === caller);
+        }
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(
+              { total: getAuditLog().size(), returned: entries.length, entries },
+              null,
+              2
+            ),
+          }],
+        };
+      }
+
+      case "comet_reset_audit_log": {
+        getAuditLog().clear();
+        return {
+          content: [{
+            type: "text",
+            text: "Audit log cleared.",
+          }],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-  } catch (error) {
+  } catch (error: unknown) {
+    // M3 + L5: route through pure helpers so the redaction and DEBUG rules
+    // are exercised by the unit tests.
+    const formatted = formatCaughtError(error, { debug: isDebugEnabled() });
     return {
-      content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : error}` }],
+      content: [{ type: "text", text: `Error: ${formatted}` }],
       isError: true,
     };
   }
 });
 
 const transport = new StdioServerTransport();
-server.connect(transport);
+
+
+// A2 fix: clean close of the CDP WebSocket on SIGINT/SIGTERM. Without this,
+// process kill leaves Comet with a dangling debugger attach which can stall
+// the next comet_connect attempt. `cometClient.disconnect()` is idempotent
+// (safe to call when no client is connected).
+let shuttingDown = false;
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await cometClient.disconnect();
+  } catch { /* best-effort cleanup */ }
+  process.exit(0);
+};
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+await server.connect(transport);
+

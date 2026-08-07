@@ -13,6 +13,7 @@ import type {
   EvaluateResult,
   CometState,
 } from "./types.js";
+import { evaluateUrl, getActivePolicy } from "./safety/url-policy.js";
 
 // ============ PLATFORM DETECTION ============
 
@@ -634,10 +635,16 @@ export class CometCDPClient {
   }
 
   /**
-   * Navigate to a URL
+   * Navigate to a URL.
+   *
+   * Hard-boundary check: evaluateUrl(url, policy, caller) runs before
+   * the CDP call. Mirrors Perplexity Comet isInternalPage / isUrlBlocked /
+   * isDomainBlacklist. Throws BlockedUrlError on deny (caught by the MCP
+   * catch handler and surfaced via formatCaughtError).
    */
-  async navigate(url: string, waitForLoad: boolean = true): Promise<NavigateResult> {
+  async navigate(url: string, waitForLoad: boolean = true, caller: string = 'manual'): Promise<NavigateResult> {
     this.ensureConnected();
+    evaluateUrl(url, getActivePolicy(), caller);
     const result = await this.client!.Page.navigate({ url });
     if (waitForLoad) await this.client!.Page.loadEventFired();
     this.state.currentUrl = url;
@@ -694,7 +701,10 @@ export class CometCDPClient {
   /**
    * Create a new tab
    */
-  async newTab(url?: string): Promise<CDPTarget> {
+  async newTab(url?: string, caller: string = 'manual'): Promise<CDPTarget> {
+    if (url !== undefined) {
+      evaluateUrl(url, getActivePolicy(), caller);
+    }
     const response = await windowsFetch(
       `http://127.0.0.1:${this.state.port}/json/new${url ? `?${url}` : ""}`,
       'PUT'
