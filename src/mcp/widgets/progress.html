@@ -1,0 +1,175 @@
+<!--
+  comet-mcp progress widget.
+
+  Self-contained HTML rendered inside an MCP Apps iframe at ui://comet-mcp/progress.html.
+  Communicates with the host via window.openToolResult() once a task completes.
+  Polls /tasks/get for status updates via postMessage.
+
+  This file is shipped as a static string at build time. No build step.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>comet-mcp research progress</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6a737d;
+    --accent: #2563eb;
+    --ok: #16a34a;
+    --err: #dc2626;
+    --border: rgba(0, 0, 0, 0.1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --fg: #e6e6e6;
+      --muted: #8b949e;
+      --border: rgba(255, 255, 255, 0.1);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 14px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  h1 { font-size: 14px; margin: 0 0 6px 0; font-weight: 600; }
+  .status { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .bar { background: var(--border); height: 4px; border-radius: 2px; overflow: hidden; margin: 8px 0 12px; }
+  .bar > div { background: var(--accent); height: 100%; width: 0; transition: width 300ms ease-out; }
+  .bar.done > div { background: var(--ok); }
+  .bar.error > div { background: var(--err); }
+  .msg { font-size: 12px; color: var(--muted); margin: 8px 0; white-space: pre-wrap; }
+  .answer { font-size: 13px; line-height: 1.5; white-space: pre-wrap; max-height: 320px; overflow: auto; padding: 10px 12px; background: rgba(0,0,0,0.03); border-radius: 6px; border: 1px solid var(--border); margin-top: 12px; }
+  button {
+    background: var(--accent); color: white; border: none; padding: 6px 12px;
+    border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px;
+  }
+  button:hover { opacity: 0.85; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .pill.working { background: rgba(37, 99, 235, 0.15); color: var(--accent); }
+  .pill.completed { background: rgba(22, 163, 74, 0.15); color: var(--ok); }
+  .pill.failed { background: rgba(220, 38, 38, 0.15); color: var(--err); }
+  .pill.cancelled { background: rgba(0,0,0,0.1); color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>comet-mcp research</h1>
+  <div class="status">
+    <span id="pill" class="pill working">working</span>
+    &nbsp;<span id="msg">Loading…</span>
+  </div>
+  <div id="bar" class="bar"><div id="bar-fill"></div></div>
+  <div id="answer" class="answer" hidden></div>
+  <button id="dismiss" hidden>Dismiss</button>
+
+<script>
+(function () {
+  const params = new URLSearchParams(window.location.search);
+  const taskId = params.get("taskId");
+  const host = params.get("host") || "";
+
+  const pill = document.getElementById("pill");
+  const msg = document.getElementById("msg");
+  const bar = document.getElementById("bar-fill");
+  const barWrap = document.getElementById("bar");
+  const answerEl = document.getElementById("answer");
+  const dismiss = document.getElementById("dismiss");
+
+  if (!taskId) {
+    msg.textContent = "Missing taskId";
+    return;
+  }
+
+  let cancelled = false;
+  let pollAttempts = 0;
+  const maxPollAttempts = 600; // ~10 minutes at 1s cadence
+
+  function setStatus(status, message) {
+    pill.className = "pill " + status;
+    pill.textContent = status;
+    if (message) msg.textContent = message;
+    if (status === "completed") {
+      barWrap.classList.add("done");
+      bar.style.width = "100%";
+    } else if (status === "failed") {
+      barWrap.classList.add("error");
+      bar.style.width = "100%";
+    } else {
+      // Indeterminate progress: nudge bar up slightly each tick so the user
+      // sees motion without claiming a fake percentage.
+      pollAttempts++;
+      const pct = Math.min(85, 5 + pollAttempts * 1.2);
+      bar.style.width = pct + "%";
+    }
+  }
+
+  async function fetchStatus() {
+    // The host MCP server exposes /tasks/get as a JSON-RPC method over the
+    // MCP transport, but inside an iframe we can't speak JSON-RPC directly.
+    // The pattern recommended by the MCP Apps spec is postMessage: the parent
+    // forwards the request to the host, which relays the response back.
+    //
+    // Until the host implements that relay, we degrade gracefully: the iframe
+    // shows a status pill and the parent can choose to re-render it on
+    // status changes via comet_research returning the same ui:// URI each
+    // time. For now, surface the taskId so the user knows what's pending.
+    msg.textContent = "Tracking task " + taskId.slice(0, 12) + "… (host polling not yet wired; see host console for live updates)";
+  }
+
+  // Best-effort: ask the host for status. If it doesn't support the
+  // postMessage protocol yet, we fall back to the static "tracking" state.
+  if (host && window.parent && window.parent !== window) {
+    try {
+      window.parent.postMessage({ jsonrpc: "2.0", id: 1, method: "tasks/get", params: { taskId } }, "*");
+    } catch (e) { /* ignore */ }
+  }
+
+  // Initialize UI from query params (parent may pre-set via the resource body).
+  const initialStatus = params.get("status") || "working";
+  const initialMsg = params.get("message") || "Research started";
+  setStatus(initialStatus, initialMsg);
+
+  fetchStatus();
+
+  // Listen for status updates from the host (when wired).
+  window.addEventListener("message", function (ev) {
+    if (!ev.data || ev.data.taskId !== taskId) return;
+    const status = ev.data.status;
+    const message = ev.data.message || "";
+    setStatus(status, message);
+    if (status === "completed" && ev.data.content) {
+      answerEl.hidden = false;
+      answerEl.textContent = ev.data.content;
+      if (window.parent && window.parent.openToolResult) {
+        window.parent.openToolResult({ taskId, status: "completed", content: ev.data.content });
+      }
+    }
+    if (status === "failed") {
+      barWrap.classList.add("error");
+      msg.textContent = ev.data.error || "Research failed";
+    }
+  });
+
+  dismiss.addEventListener("click", function () {
+    cancelled = true;
+    msg.textContent = "Dismissed";
+  });
+
+  // Surface task id in a hidden element so test harnesses can scrape it.
+  const idEl = document.createElement("div");
+  idEl.id = "task-id";
+  idEl.style.display = "none";
+  idEl.textContent = taskId;
+  document.body.appendChild(idEl);
+})();
+</script>
+</body>
+</html>
