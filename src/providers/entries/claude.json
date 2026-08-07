@@ -1,0 +1,71 @@
+{
+  "provider": "claude",
+  "url": "https://claude.ai/",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-07T09:19:38.169Z",
+  "method": "live-CDP-inventory + PONG validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "[data-testid=\"chat-input\"]",
+      "tag": "div",
+      "testid": "chat-input",
+      "aria": "Write your prompt to Claude",
+      "role": "textbox",
+      "classes": [
+        "tiptap",
+        "ProseMirror"
+      ],
+      "snippet": " "
+    },
+    "sendButton": {
+      "selector": "#_r_eq_[aria-label=\"Send message\"]",
+      "sel": "#_r_eq_[aria-label=\"Send message\"]",
+      "aria": "Send message",
+      "testid": "",
+      "text": "",
+      "type": "button",
+      "hasIcon": false,
+      "disabled": false
+    },
+    "modelPicker": {
+      "selector": "#base-ui-_r_cp_",
+      "tag": "button",
+      "id": "base-ui-_r_cp_",
+      "testid": "model-selector-dropdown",
+      "aria": "Model: Haiku 4.5",
+      "classes": [
+        "cds-reset",
+        "group/btn",
+        "relative",
+        "isolate"
+      ],
+      "text": "Haiku 4.5 ",
+      "hasIcon": false,
+      "disabled": false
+    },
+    "responseContainer": {
+      "selector": "div.font-claude-response",
+      "aliases": [
+        "[class*=\"font-claude-response\"]"
+      ],
+      "condition": "take the LAST element for the current turn"
+    }
+  },
+  "responseSelectors": [
+    "div.font-claude-response",
+    "[class*=\"font-claude-response\"]"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "submit control rendered after text is typed; Enter-key fallback verified",
+    "responseFallback": "div.font-claude-response OR [class*=\"font-claude-response\"]",
+    "stopDetection": "varies by provider — see probe",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "working indicator present and/or response text growing",
+      "completed": "no working indicator and response text stable for 3s"
+    }
+  }
+}

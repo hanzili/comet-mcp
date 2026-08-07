@@ -4,6 +4,16 @@
 // Claude Code ↔ Perplexity Comet bidirectional interaction
 // Simplified to 6 essential tools
 
+// CLI dispatch: `comet-mcp discover|verify|list ...` runs the on-demand provider
+// discovery workflow instead of starting the MCP server (ADR 0001: discovery is an
+// opt-in operational workflow, not a hot-path dependency).
+const CLI_SUBCOMMANDS = ['discover', 'verify', 'list'];
+if (CLI_SUBCOMMANDS.includes(process.argv[2] ?? '')) {
+  const { runCli } = await import('./cli.js');
+  const code = await runCli(process.argv.slice(2));
+  process.exit(code);
+}
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -60,6 +70,30 @@ const TOOLS: Tool[] = [
           description: "Mode to switch to (optional - omit to see current mode)",
         },
       },
+    },
+  },
+  {
+    name: "provider_discover",
+    description: "Run the discovery workflow against a provider tab (inventory, one varied validation prompt, entry regeneration). Opt-in operational tool — requires the provider tab open in Comet. Use when provider_verify reports a missing hook or selectors drift.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "Provider name: perplexity, grok, gemini, chatgpt, claude" },
+        write: { type: "boolean", description: "Write the regenerated entry + fixtures (default: true)" },
+        diff: { type: "boolean", description: "Show selector changes vs the committed entry (default: true)" },
+      },
+      required: ["provider"],
+    },
+  },
+  {
+    name: "provider_verify",
+    description: "Cheap health check: resolve the provider entry's known selectors against the live tab. Sends NO prompt. Reports ok/missing per control so drift is detectable without polluting a conversation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "Provider name: perplexity, grok, gemini, chatgpt, claude" },
+      },
+      required: ["provider"],
     },
   },
 ];
@@ -418,6 +452,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{ type: "text", text: `Failed to switch mode: ${clickResult.error}` }],
             isError: true,
           };
+        }
+      }
+
+      case "provider_discover": {
+        const providerArg = String(args?.provider ?? '');
+        const { runDiscovery, diffEntry, listProviders } = await import("./core/discovery.js");
+        const provider = listProviders().includes(providerArg as any) ? providerArg as any : null;
+        if (!provider) {
+          return { content: [{ type: "text", text: `Unknown provider: ${providerArg} (have: ${listProviders().join(', ')})` }], isError: true };
+        }
+        const write = (args?.write as boolean | undefined) ?? true;
+        const diff = (args?.diff as boolean | undefined) ?? true;
+        try {
+          const result = await runDiscovery(provider, { write });
+          let text = `provider_discover ${provider}: state=${result.endedState} confidence=${result.confidence}\n` +
+            `prompt: "${result.validationPrompt}" → expected "${result.expectedToken}"\n` +
+            `submit: ${result.submitMethod?.method ?? '?'}${result.submitMethod?.selector ? ' via ' + result.submitMethod.selector : ''}\n` +
+            (result.wroteEntry ? `entry written: ${result.entryPath}\n` : 'entry NOT written\n') +
+            `fixtures: ${Object.keys(result.fixtures).join(', ') || '(none)'}`;
+          if (diff && result.wroteEntry) {
+            const d = diffEntry(provider, result.entry);
+            text += `\n\ndiff vs ${d.against ?? 'none'}:\n` + (d.changes.length ? d.changes.join('\n') : 'unchanged');
+          }
+          return { content: [{ type: "text", text }] };
+        } catch (error) {
+          return { content: [{ type: "text", text: `provider_discover failed: ${error instanceof Error ? error.message : error}` }], isError: true };
+        }
+      }
+
+      case "provider_verify": {
+        const providerArg = String(args?.provider ?? '');
+        const { verifyProvider, listProviders } = await import("./core/discovery.js");
+        const provider = listProviders().includes(providerArg as any) ? providerArg as any : null;
+        if (!provider) {
+          return { content: [{ type: "text", text: `Unknown provider: ${providerArg} (have: ${listProviders().join(', ')})` }], isError: true };
+        }
+        try {
+          const result = await verifyProvider(provider);
+          if (!result.tabFound) {
+            return { content: [{ type: "text", text: `No ${provider} tab found — open the provider tab in Comet first` }], isError: true };
+          }
+          let text = `${provider} verify (no prompt sent):\n`;
+          for (const c of result.checks) text += `  [${c.ok ? 'OK' : 'MISS'}] ${c.name}: ${c.selector}${c.conditional ? ' (conditional)' : ''}\n`;
+          text += result.healthy ? 'HEALTHY' : 'UNHEALTHY — re-run: provider_discover ' + provider;
+          return { content: [{ type: "text", text }] };
+        } catch (error) {
+          return { content: [{ type: "text", text: `provider_verify failed: ${error instanceof Error ? error.message : error}` }], isError: true };
         }
       }
 

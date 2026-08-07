@@ -1,0 +1,70 @@
+{
+  "provider": "chatgpt",
+  "url": "https://chatgpt.com/",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-07T09:09:10.288Z",
+  "method": "live-CDP-inventory + PONG validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "[aria-label=\"Chat with ChatGPT\"]",
+      "tag": "textarea",
+      "aria": "Chat with ChatGPT",
+      "placeholder": "Ask anything",
+      "name": "prompt-textarea",
+      "classes": [
+        "wcDTda_fallbackTextarea"
+      ],
+      "snippet": ""
+    },
+    "sendButton": {
+      "selector": "#composer-submit-button[data-testid=\"send-button\"][aria-label=\"Send prompt\"]",
+      "sel": "#composer-submit-button[data-testid=\"send-button\"][aria-label=\"Send prompt\"]",
+      "aria": "Send prompt",
+      "testid": "send-button",
+      "text": "",
+      "type": "",
+      "hasIcon": true,
+      "disabled": false
+    },
+    "modelPicker": {
+      "selector": "#radix-_R_4abnelpakqac9l35_",
+      "tag": "button",
+      "id": "radix-_R_4abnelpakqac9l35_",
+      "testid": "model-switcher-dropdown-button",
+      "aria": "Model selector",
+      "classes": [
+        "group",
+        "flex",
+        "cursor-pointer",
+        "justify-center"
+      ],
+      "text": "ChatGPT",
+      "hasIcon": true,
+      "disabled": false
+    },
+    "responseContainer": {
+      "selector": "[data-message-author-role=\"assistant\"]",
+      "aliases": [
+        "[data-testid=\"conversation-turn\"]"
+      ],
+      "condition": "take the LAST element for the current turn"
+    }
+  },
+  "responseSelectors": [
+    "[data-message-author-role=\"assistant\"]",
+    "[data-testid=\"conversation-turn\"]"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "submit control rendered after text is typed; Enter-key fallback verified",
+    "responseFallback": "[data-message-author-role=\"assistant\"] OR [data-testid=\"conversation-turn\"]",
+    "stopDetection": "varies by provider — see probe",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "working indicator present and/or response text growing",
+      "completed": "no working indicator and response text stable for 3s"
+    }
+  }
+}

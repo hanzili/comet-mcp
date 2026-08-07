@@ -8,3 +8,11 @@ demo-clear.gif
 DEBUG_MEMORY.md
 TEST_PLAN.md
 VISION.md
+
+# Regenerable discovery/spike run artifacts
+test/integration/out/
+# Per-provider validation-prompt rotation state (runtime, not source)
+test/integration/.prompt-state.json
+
+# Discovery prompt-rotation state (runtime, not source)
+src/providers/entries/.prompt-state.json

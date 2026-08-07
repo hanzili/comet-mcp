@@ -1,0 +1,74 @@
+{
+  "provider": "gemini",
+  "url": "https://gemini.google.com/app",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-07T09:08:42.329Z",
+  "method": "live-CDP-inventory + PONG validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "[aria-label=\"Enter a prompt for Gemini\"]",
+      "tag": "div",
+      "aria": "Enter a prompt for Gemini",
+      "role": "textbox",
+      "classes": [
+        "ql-editor",
+        "ql-blank",
+        "textarea",
+        "new-input-ui"
+      ],
+      "snippet": " "
+    },
+    "sendButton": {
+      "selector": "[aria-label=\"Send message\"]",
+      "sel": "[aria-label=\"Send message\"]",
+      "aria": "Send message",
+      "testid": "",
+      "text": "",
+      "type": "",
+      "hasIcon": false,
+      "disabled": false
+    },
+    "modelPicker": {
+      "selector": "[aria-label=\"Gemini Apps Activity\"]",
+      "tag": "button",
+      "aria": "Gemini Apps Activity",
+      "classes": [
+        "mdc-icon-button",
+        "mat-mdc-icon-button",
+        "mat-mdc-button-base",
+        "mat-badge"
+      ],
+      "text": "",
+      "hasIcon": false,
+      "disabled": false
+    },
+    "responseContainer": {
+      "selector": "model-response",
+      "aliases": [
+        "[data-testid*=\"response\"]",
+        "rich-text",
+        "user-query"
+      ],
+      "condition": "take the LAST element for the current turn"
+    }
+  },
+  "responseSelectors": [
+    "model-response",
+    "[data-testid*=\"response\"]",
+    "rich-text",
+    "user-query"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "submit control rendered after text is typed; Enter-key fallback verified",
+    "responseFallback": "model-response OR [data-testid*=\"response\"] OR rich-text OR user-query",
+    "stopDetection": "varies by provider — see probe",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "working indicator present and/or response text growing",
+      "completed": "no working indicator and response text stable for 3s"
+    }
+  }
+}

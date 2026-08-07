@@ -1,0 +1,66 @@
+{
+  "provider": "perplexity",
+  "url": "https://www.perplexity.ai/",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-07T09:07:43.322Z",
+  "method": "live-CDP-inventory + PONG validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "#ask-input",
+      "tag": "div",
+      "id": "ask-input",
+      "role": "textbox",
+      "classes": [
+        "overflow-auto",
+        "max-h-[45vh]",
+        "lg:max-h-[40vh]",
+        "sm:max-h-[25vh]"
+      ],
+      "snippet": ""
+    },
+    "sendButton": {
+      "selector": "[aria-label=\"Submit\"]",
+      "sel": "[aria-label=\"Submit\"]",
+      "aria": "Submit",
+      "testid": "",
+      "text": "",
+      "type": "button",
+      "hasIcon": true,
+      "disabled": false
+    },
+    "modelPicker": {
+      "selector": "[aria-label=\"Model\"]",
+      "tag": "button",
+      "aria": "Model",
+      "classes": [
+        "reset",
+        "interactable",
+        "select-none",
+        "[-webkit-user-drag:none]"
+      ],
+      "text": "Model",
+      "hasIcon": true,
+      "disabled": false
+    },
+    "responseContainer": {
+      "selector": "[class*=\"prose\"]",
+      "condition": "take the LAST element for the current turn"
+    }
+  },
+  "responseSelectors": [
+    "[class*=\"prose\"]"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "submit control rendered after text is typed; Enter-key fallback verified",
+    "responseFallback": "[class*=\"prose\"]",
+    "stopDetection": "varies by provider — see probe",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "working indicator present and/or response text growing",
+      "completed": "no working indicator and response text stable for 3s"
+    }
+  }
+}
