@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { cometClient } from "./cdp-client.js";
 import { cometAI } from "./comet-ai.js";
+import { formatCaughtError, isDebugEnabled } from "./util/format.js";
 
 const TOOLS: Tool[] = [
   {
@@ -424,13 +425,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-  } catch (error) {
+  } catch (error: unknown) {
+    // M3 + L5: route through pure helpers so the redaction and DEBUG rules
+    // are exercised by the unit tests.
+    const formatted = formatCaughtError(error, { debug: isDebugEnabled() });
     return {
-      content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : error}` }],
+      content: [{ type: "text", text: `Error: ${formatted}` }],
       isError: true,
     };
   }
 });
 
 const transport = new StdioServerTransport();
-server.connect(transport);
+
+
+// A2 fix: clean close of the CDP WebSocket on SIGINT/SIGTERM. Without this,
+// process kill leaves Comet with a dangling debugger attach which can stall
+// the next comet_connect attempt. `cometClient.disconnect()` is idempotent
+// (safe to call when no client is connected).
+let shuttingDown = false;
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    await cometClient.disconnect();
+  } catch { /* best-effort cleanup */ }
+  process.exit(0);
+};
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+await server.connect(transport);
+
