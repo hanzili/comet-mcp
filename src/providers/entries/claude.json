@@ -1,0 +1,85 @@
+{
+  "provider": "claude",
+  "url": "https://claude.ai/",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-07T19:24:47.847Z",
+  "method": "live-CDP-inventory + READY validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "[data-testid=\"chat-input\"]",
+      "confidence": 1,
+      "success_count": 2,
+      "fail_count": 0,
+      "tag": "div",
+      "testid": "chat-input",
+      "aria": "Write your prompt to Claude",
+      "role": "textbox",
+      "classes": [
+        "tiptap",
+        "ProseMirror",
+        "ProseMirror-focused"
+      ],
+      "snippet": "\n",
+      "fingerprint": 3338592320,
+      "last_validated": 1786132285
+    },
+    "sendButton": {
+      "selector": "[aria-label=\"Send message\"]",
+      "confidence": 0.9,
+      "success_count": 0,
+      "fail_count": 0,
+      "fingerprint": 0,
+      "conditional": true,
+      "condition": "rendered only after composer has text"
+    },
+    "modelPicker": {
+      "selector": "[data-testid=\"model-selector-dropdown\"]",
+      "confidence": 1,
+      "success_count": 2,
+      "fail_count": 0,
+      "tag": "button",
+      "id": "base-ui-_r_6o_",
+      "testid": "model-selector-dropdown",
+      "aria": "Model: Haiku 4.5",
+      "classes": [
+        "cds-reset",
+        "group/btn",
+        "relative",
+        "isolate"
+      ],
+      "text": "Haiku 4.5 ",
+      "hasIcon": false,
+      "disabled": false,
+      "fingerprint": 592845485,
+      "last_validated": 1786132285
+    },
+    "responseContainer": {
+      "selector": "div.font-claude-response",
+      "confidence": 0.9,
+      "success_count": 0,
+      "fail_count": 0,
+      "aliases": [
+        "[class*=\"font-claude-response\"]"
+      ],
+      "conditional": true,
+      "condition": "rendered only after the first response — empty-state idle absence is not drift"
+    }
+  },
+  "responseSelectors": [
+    "div.font-claude-response",
+    "[class*=\"font-claude-response\"]"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "submit control rendered after text is typed; Enter-key fallback verified",
+    "responseFallback": "div.font-claude-response OR [class*=\"font-claude-response\"]",
+    "stopDetection": "varies by provider — see probe",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "working indicator present and/or response text growing",
+      "completed": "no working indicator and response text stable for 3s"
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "provider": "grok",
+  "url": "https://grok.com/",
+  "version": "Chrome/150.0.7871.230",
+  "discoveredAt": "2026-08-06T20:37:16.362Z",
+  "method": "live-CDP-inventory + PONG validation",
+  "confidence": "high",
+  "controls": {
+    "composer": {
+      "selector": "[data-testid=\"chat-input\"]",
+      "tag": "div",
+      "testid": "chat-input",
+      "classes": [
+        "relative",
+        "min-h-[60px]"
+      ],
+      "snippet": "\n",
+      "confidence": 0.9500000000000001,
+      "success_count": 1,
+      "fail_count": 0,
+      "fingerprint": 3028313357,
+      "last_validated": 1786108682
+    },
+    "sendButton": {
+      "selector": "[data-testid=\"chat-submit\"][aria-label=\"Submit\"]",
+      "sel": "[data-testid=\"chat-submit\"][aria-label=\"Submit\"]",
+      "aria": "Submit",
+      "testid": "chat-submit",
+      "text": "",
+      "type": "submit",
+      "hasIcon": true,
+      "disabled": false,
+      "confidence": 0.9,
+      "success_count": 0,
+      "fail_count": 0,
+      "fingerprint": 0,
+      "conditional": true,
+      "condition": "rendered only after composer has text"
+    },
+    "modelPicker": {
+      "selector": "#model-select-trigger",
+      "tag": "button",
+      "id": "model-select-trigger",
+      "aria": "Model select",
+      "classes": [
+        "inline-flex",
+        "items-center",
+        "justify-center",
+        "gap-2"
+      ],
+      "text": "Fast",
+      "hasIcon": true,
+      "disabled": false,
+      "confidence": 0.9500000000000001,
+      "success_count": 1,
+      "fail_count": 0,
+      "fingerprint": 3501286431,
+      "last_validated": 1786108682
+    },
+    "newChat": {
+      "selector": "[aria-label=\"New chat\"]",
+      "tag": "button",
+      "aria": "New chat",
+      "classes": [
+        "size-5",
+        "shrink-0",
+        "items-center",
+        "justify-center"
+      ],
+      "text": "",
+      "hasIcon": true,
+      "disabled": false,
+      "confidence": 0.9500000000000001,
+      "success_count": 1,
+      "fail_count": 0,
+      "fingerprint": 2764096832,
+      "last_validated": 1786108682
+    },
+    "responseContainer": {
+      "selector": "[data-testid=\"assistant-message\"]",
+      "conditional": true,
+      "condition": "take the LAST element for the current turn — response container exists only after a first response",
+      "confidence": 0.9500000000000001,
+      "success_count": 1,
+      "fail_count": 0,
+      "fingerprint": 1320723996,
+      "last_validated": 1786108682
+    }
+  },
+  "responseSelectors": [
+    "[data-testid=\"assistant-message\"]"
+  ],
+  "heuristics": {
+    "composerFallback": "any [role=\"textbox\"] or textarea visible near the bottom of the viewport",
+    "sendButtonFallback": "[data-testid=\"chat-submit\"] (rendered only after text is typed); Enter-key fallback works",
+    "responseFallback": "[data-testid=\"assistant-message\"] (last element)",
+    "stopDetection": "NONE on Fast model — verified: no stop button ever renders during generation; use the \"Working for Xs\" indicator instead",
+    "stateMachine": {
+      "idle": "no working indicator, composer empty",
+      "typing": "composer has text, no working indicator",
+      "streaming": "body text contains \"Working for Xs\" (canvas-working-indicator) and/or assistant-message text growing",
+      "completed": "no working indicator and assistant-message text stable for 3s"
+    }
+  }
+}
