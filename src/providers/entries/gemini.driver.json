@@ -1,0 +1,27 @@
+{
+  "typing": "insertText",
+  "submit": {
+    "method": "click",
+    "verify": "composer-emptied",
+    "enterSends": true
+  },
+  "signals": {
+    "working": { "kind": "stop-control" },
+    "completed": { "kind": "stop-absent" },
+    "login": [
+      "Sign in",
+      "Sign in to continue",
+      "To continue, sign in",
+      "Google Accounts"
+    ],
+    "blocked": [
+      "Try again later",
+      "unusual activity",
+      "rate limit",
+      "try again in a few minutes"
+    ]
+  },
+  "markdown": "gemini",
+  "reset": { "method": "url", "url": "https://gemini.google.com/app" },
+  "extraction": { "preferLast": true }
+}

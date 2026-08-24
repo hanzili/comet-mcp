@@ -1,0 +1,25 @@
+{
+  "typing": "insertText",
+  "submit": {
+    "method": "click-after-type",
+    "verify": "composer-emptied",
+    "enterSends": false
+  },
+  "completionMarker": true,
+  "signals": {
+    "working": { "kind": "stop-control", "selector": "button[aria-label*=\"Stop\"], button[aria-label*=\"Cancel\"], button[data-testid*=\"stop\"]" },
+    "completed": { "kind": "stop-absent" },
+    "login": [
+      "Sign in to Claude",
+      "Log in to Claude",
+      "You are signed out",
+      "Session expired",
+      "Sign in to continue"
+    ],
+    "blocked": []
+  },
+  "markdown": "claude",
+  "freshChatByNavigation": true,
+  "reset": { "method": "navigate", "url": "https://claude.ai/new" },
+  "extraction": { "preferLast": true }
+}

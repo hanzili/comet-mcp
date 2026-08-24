@@ -66,18 +66,38 @@ Claude: [Comet handles the login flow and navigation]
 
 | Tool | Description |
 |------|-------------|
-| `comet_connect` | Connect to Comet (auto-starts if needed) |
-| `comet_ask` | Send a task and wait for response |
+| `comet_connect` | Connect to Comet (auto-starts if needed); no longer closes user tabs |
+| `comet_ask` | Send a task to Perplexity and wait for response |
 | `comet_poll` | Check progress on long-running tasks |
 | `comet_stop` | Stop current task |
 | `comet_screenshot` | Capture current page |
-| `comet_mode` | Switch modes: search, research, labs, learn |
+| `comet_mode` | Switch Perplexity modes: search, research, labs, learn |
+| `provider_open` | Open (or reuse) a provider tab and register it (perplexity, grok, gemini, chatgpt, claude) |
+| `provider_reconnect` | Re-establish a provider's CDP session + re-hydrate dedup anchors |
+| `provider_list` | List registered provider tabs + CDP pool state |
+| `provider_close` | Close a provider tab (scoped; last tab is reset, never closed) |
+| `provider_health` | Structured health per provider (entry-level verify for pre-driver providers) |
+| `provider_override` | Persist a selector override for a provider control |
+| `provider_ask` | Send a prompt to any provider and wait (async dispatch — survives long generations) |
+| `provider_poll` | Advance/check a provider's current turn |
+| `provider_stop` | Stop a provider's current generation (Grok Fast: no-op) |
+| `provider_discover` | Run live DOM discovery + regenerate a provider entry (CLI: `comet-mcp discover`) |
+| `provider_verify` | Cheap selector health check (no prompt); ADR 0003 learning loop |
+| `provider_response` | Fetch a saved provider response by responseId (chunked) |
+
+## Multi-provider backbone (2026-08-07)
+
+comet-mcp evolved from a Perplexity-only bridge into a multi-provider conversation
+backbone: Perplexity, Grok, Gemini, ChatGPT, and Claude each operate in their own
+authenticated Comet tab, controlled through **independent per-target CDP sessions**
+(pool cap 5), with a tab registry, durable idempotent event store (replay-safe
+sends), reconnect-dedup, and self-healing selector discovery.
 
 ## How It Works
 
 ```
-Claude Code  →  MCP Server  →  CDP  →  Comet Browser  →  Perplexity AI
-   (reasoning)     (bridge)                              (web browsing)
+Claude Code  →  MCP Server  →  CDP (per-tab sessions)  →  Comet Browser  →  Provider tabs
+   (reasoning)     (bridge)                                                     (web browsing)
 ```
 
 Claude sends high-level goals ("research X", "log into Y"). Comet figures out the clicks, scrolls, and searches. Results flow back to Claude.

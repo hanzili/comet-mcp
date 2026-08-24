@@ -1,0 +1,30 @@
+{
+  "typing": "insertText",
+  "submit": {
+    "method": "click",
+    "verify": "composer-emptied",
+    "enterSends": true
+  },
+  "signals": {
+    "working": { "kind": "stop-control" },
+    "completed": { "kind": "stop-absent" },
+    "login": [
+      "Log in",
+      "Sign in to ChatGPT",
+      "Sign in to continue",
+      "Sign in with Google"
+    ],
+    "blocked": [
+      "Verify you are human",
+      "Access denied",
+      "Too many requests",
+      "rate limit",
+      "captcha",
+      "Cloudflare"
+    ]
+  },
+  "messageId": { "attr": "data-message-id" },
+  "markdown": "chatgpt",
+  "reset": { "method": "url", "url": "https://chatgpt.com/" },
+  "extraction": { "preferLast": true }
+}
