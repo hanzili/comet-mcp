@@ -8,3 +8,6 @@ demo-clear.gif
 DEBUG_MEMORY.md
 TEST_PLAN.md
 VISION.md
+
+# Regenerable discovery/spike run artifacts
+test/integration/out/

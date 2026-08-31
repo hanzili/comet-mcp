@@ -1,0 +1,291 @@
+Both attached outlines are strong and largely aligned. The GPT-5.6 version correctly tightens Sonnet’s draft (TypeScript contract, relay security, concurrent CDP, RapierCraft fork, typing API, conversation log, `wait_any`). What’s still thin in both is empirical CDP concurrency proof, markdown fidelity as a *gate* before relay, a concrete test matrix, and a clearer “what ships vs. what waits” boundary.
+
+Below is a critique of both, then a single synthesized outline that absorbs the best of each and closes the remaining gaps.
+
+***
+
+## Critique of the two attached outlines
+
+### Sonnet 5 doc — strengths
+- Clear baseline diagnosis of `hanzili/comet-mcp` (single session, tab destruction, hard-coded `comet-ai.ts`, silent `status.steps` failures).
+- Correctly scopes chrome-agent as offline selector miner, not hot path.
+- BrowserSmith three-tier hooks and stop-button authority are treated as structural, not polish.
+- Build order is incremental and sensible.
+- Open risks section is honest (selector scale, markdown, classifiers, no live `evaluate`).
+
+### Sonnet 5 doc — gaps
+- No TypeScript `ChatDriver` / `ProviderEntry` contract — abstraction stays prose.
+- Concurrent CDP sessions asserted, not designed (one `this.client` → N sessions).
+- Relay security mentioned once; no wrapping format or fallback.
+- No conversation-log schema; no `wait_any` for concurrent long jobs.
+- RapierCraft fork noted only in passing; starting-point recommendation missing.
+- CDP typing equivalent of BrowserSmith’s `insertText` not spelled out.
+
+### GPT-5.6 doc — strengths
+- Supplies the missing TypeScript interfaces.
+- Explicit RapierCraft-first recommendation.
+- `relay_message` modes + wrapping prefix; shared log schema; `broadcast` / `critique` / `round_robin`.
+- `wait_any` for poll efficiency.
+- Typing: `Input.dispatchKeyEvent` / `insertText` for ProseMirror.
+- Harder open-risk list (CDP concurrency empirical test, login-expiry health state).
+
+### GPT-5.6 doc — remaining weaknesses
+- Still no **test matrix** (what must pass before each phase is “done”).
+- Markdown fidelity deferred without a decision rule or owner phase.
+- CDP concurrency risk flagged but no minimal experiment defined.
+- No guidance on **tool naming migration** (`comet_*` vs `provider_*`) for existing Claude configs.
+- Element-picker / override UX is tool-only; no note on how overrides persist across process restarts.
+- Auth/login-required path is named but not wired into tool return shapes.
+
+***
+
+## Synthesized improved outline
+
+### Purpose & scope
+
+Evolve comet-mcp from a Perplexity-only, single-tab MCP server into a **multi-provider, multi-tab backbone** where an MCP client (Claude) can:
+
+1. Open and drive several AI chat UIs at once (Grok, Gemini, ChatGPT, Claude.ai, Perplexity), each in its own Comet tab.
+2. Poll and collect answers independently.
+3. Relay messages between those providers (not only Claude ↔ one provider).
+4. Survive selector drift, login expiry, and long concurrent jobs without taking down the whole session.
+
+**Non-goals for v1:** multiple Comet *processes*, multi-account isolation beyond one shared profile, full visual element-picker UI, or replacing Comet with a generic Chrome driver.
+
+***
+
+### 1. Confirmed baseline (`hanzili/comet-mcp`)
+
+| Fact | Implication |
+|------|-------------|
+| One active CDP client; tab switch = disconnect/reconnect | Must become N concurrent sessions |
+| `comet_connect` / `newChat:true` close all tabs but one + force `perplexity.ai` | Hostile to multi-tab; replace with tab registry |
+| All DOM logic in `comet-ai.ts` | Extract into pluggable drivers |
+| Brittle status path (`status.steps is not iterable`, escaping bugs, prose order) | Unit-test fixtures + `node --check` on injected scripts |
+| No live `evaluate` for the MCP client | Add debug tool or rely on chrome-agent offline |
+| Single port 9222, one Comet process | Keep; do not invent multi-window yet |
+
+**Starting point:** fork / build on **[RapierCraft/Perplexity-Comet-MCP](https://github.com/RapierCraft/Perplexity-Comet-MCP)** (already has `comet_tabs` list/switch/close + last-tab protection), not raw `hanzili/comet-mcp`.
+
+***
+
+### 2. TypeScript contract: registry + driver
+
+Define the contract *before* any new provider code.
+
+```typescript
+// src/types/chat-driver.ts
+
+type FoundVia = "override" | "known" | "heuristic" | "missing";
+
+interface ProviderHook {
+  known: string[];       // stable CSS: aria-*, data-*, id, role
+  heuristic: string;     // e.g. "lowest-large-textbox", "rightmost-svg-near-composer"
+  override?: string;     // runtime / persisted; always wins
+}
+
+interface ProviderEntry {
+  key: "perplexity" | "grok" | "gemini" | "chatgpt" | "claude";
+  name: string;
+  home: string;
+  freshChatByNavigation: boolean;
+  authCookieNames: string[];
+  hooks: {
+    composer: ProviderHook;
+    send: ProviderHook;
+    stop: ProviderHook;      // re-resolved every poll — never cache node
+    output: ProviderHook;
+    response: ProviderHook;  // container for extraction
+    newChat?: ProviderHook;
+    model?: ProviderHook;
+  };
+  status: {
+    workingSignal: "stop-visible";
+    completedSignal: "stop-gone + new-assistant-content";
+    completedTextMarkers?: string[];
+  };
+  typing: "execCommand" | "dispatchKeyEvent";  // ProseMirror → dispatchKeyEvent
+  markdown: "innerText" | "turndown";          // decide per provider before relay
+}
+
+interface TabSession {
+  tabId: string;
+  targetId: string;
+  providerKey: string;
+  cdpSession: CDP.Client;   // one session per tab, held open
+  state: "idle" | "working" | "completed" | "login_required" | "degraded";
+}
+
+interface HealthReport {
+  tabId: string;
+  providerKey: string;
+  hooks: Record<string, { foundVia: FoundVia; selectorUsed?: string }>;
+  loginOk: boolean;
+  notes?: string[];
+}
+
+interface PollResult {
+  status: TabSession["state"];
+  response?: string;
+  steps?: string[];
+  currentStep?: string;
+  agentBrowsingUrl?: string;
+}
+
+interface ChatDriver {
+  ask(prompt: string, session: TabSession, opts?: { newChat?: boolean; timeoutMs?: number }): Promise<string | "in-progress">;
+  poll(session: TabSession): Promise<PollResult>;
+  stop(session: TabSession): Promise<void>;
+  health(session: TabSession): Promise<HealthReport>;
+  resetTab(session: TabSession): Promise<void>;  // navigate home / fresh chat for *this* tab only
+  extractResponse(session: TabSession): Promise<string>;
+}
+```
+
+- `src/providers/<key>.ts` exports `ProviderEntry` (+ optional driver overrides).
+- Runtime loads registry from `providers/`; overrides persist to `~/.comet-mcp/overrides.json`.
+
+***
+
+### 3. Multi-tab session model
+
+Replace tab-destruction with a registry:
+
+```
+tabRegistry: Map<tabId, TabSession>
+```
+
+**CDP concurrency**
+- Comet exposes one debug port (9222). `listTargets()` returns all pages.
+- `chrome-remote-interface` can open **one CDP connection per `targetId`** and keep them alive.
+- **Gate before P3:** empirical test — open 5 tabs, attach 5 sessions, run concurrent `Runtime.evaluate` + `Input.dispatchKeyEvent` for 60s; confirm no silent drops. Document max stable N.
+
+**Policy**
+- Never close the last tab of a given provider (RapierCraft last-tab protection).
+- `newChat` / hard reset scopes to **one** tab (navigate to provider `home` or temporary-chat URL), never global close-all.
+- Shared logged-in Comet profile is the default (user already signed into sites). Per-partition only if multi-account isolation is required later.
+
+**Tool surface (MCP)**
+
+| Tool | Args | Purpose |
+|------|------|---------|
+| `provider_open` | `providerKey` | Open/navigate tab → `tabId` |
+| `provider_ask` | `tabId`, `prompt`, `newChat?`, `timeoutMs?` | Submit |
+| `provider_poll` | `tabId` | Status / response |
+| `provider_stop` | `tabId` | Cancel generation |
+| `provider_health` | `tabId?` | Hook resolution + login |
+| `provider_list` | — | Tabs + provider + state |
+| `provider_close` | `tabId` | Close (respect last-tab rule) |
+| `provider_override` | `tabId`, `hook`, `cssSelector` | Persist override |
+| `provider_evaluate` | `tabId`, `expression` | Debug (optional, gated) |
+| `relay_message` | `fromTabId`, `toTabId`, `mode`, `content?` | Backbone primitive |
+| `wait_any` | `tabIds[]`, `timeoutMs` | Block until any completes |
+
+Keep `comet_*` aliases for one release if existing Claude configs depend on them; document deprecation.
+
+***
+
+### 4. Discovery pipeline (chrome-agent, offline)
+
+One-time or on UI-break detection, **not** in the hot path:
+
+1. Auth: `--copy-cookies --stealth --browser <key>` or `--connect` to logged-in Comet.
+2. Idle surface: `inspect --filter "textbox,button,combobox" --max-depth 4 --json` + `eval` over contenteditable / textarea / role=textbox → collect `aria-label`, `placeholder`, `data-testid`, short class fragments.
+3. Submit path: try Enter; else scan visible non-disabled buttons (SVG + send/submit labels).
+4. State sequence: idle → type probe → streaming → done; capture stop appearance/disappearance, spinners, markers.
+5. Response container: last non-UI prose/markdown/message-role node.
+6. Validate: prompt `"Say only the word PONG"`; confirm PONG in extracted response.
+7. Emit `ProviderEntry` JSON → `src/providers/<key>.ts`; hand-tune heuristics; commit.
+
+Re-run and **diff** against stored entry when health reports sustained `heuristic` or `missing`.
+
+***
+
+### 5. Runtime resilience (BrowserSmith rules for every driver)
+
+1. **Never cache the stop node** — re-query every poll.
+2. **Stop-visible = only hard “working” signal**; text growth / spinners secondary.
+3. **`provider_health`** before long waits — surface `foundVia` and `login_required` early.
+4. **Hard reset per tab** only — fresh chat URL for that provider; do not kill sibling tabs.
+5. **Typing:** ProseMirror-like UIs → CDP `Input.dispatchKeyEvent` with `type: "insertText"` (and real keyDown/keyUp for Enter). Avoid deprecated `document.execCommand('insertText')` where it already fails.
+6. **Injected scripts:** every template string run through `node --check`; unit-test join / dedupe / truncate / steps parsing against fixtures (kills the `status.steps is not iterable` class).
+7. **Overrides** written by `provider_override` persist across process restarts.
+
+***
+
+### 6. Relay & communication backbone
+
+**`relay_message(fromTabId, toTabId, mode, content?)`**
+
+| Mode | Behavior |
+|------|----------|
+| `verbatim` | Last response (or supplied content) as next prompt |
+| `wrapped` | Prefix: `[Relayed from {providerName} at {ts}]\n\n{content}` — reduces classifier false positives |
+| `summarize` | Orchestrator (Claude) compresses first, then wrap |
+
+**Shared conversation log** (memory + optional `~/.comet-mcp/session.json`):
+
+```typescript
+interface ConversationEntry {
+  turn: number;
+  timestamp: string;
+  from: string;   // providerKey | "user" | "orchestrator"
+  to: string;
+  content: string;
+  mode: "verbatim" | "wrapped" | "summarize";
+  tabIds: { from?: string; to?: string };
+}
+```
+
+Cross-provider thread exists **only** here; each provider tab sees only its own history.
+
+**Orchestration helpers** (compose on top of tools, not new DOM):
+- `broadcast(prompt, providerKeys[])` — same prompt → N tabs → collect.
+- `critique(fromTabId, toTabId)` — “Critique the following: …”
+- `round_robin(providerKeys[], seed, turns)` — chain replies.
+
+**`wait_any(tabIds[], timeoutMs)`** — server-side wait until any tab reaches `completed` or `degraded`; one MCP round-trip instead of N client polls (critical when Grok deep-research and Gemini run in parallel).
+
+**Markdown fidelity gate (before P4)**  
+Decide per provider: `innerText` (fast, loses structure) vs `innerHTML` + turndown (keeps fences/tables). **Inconsistent formats across providers corrupt relay.** Resolve in P1–P2 for Perplexity + Grok; require a choice in each new `ProviderEntry.markdown` field.
+
+***
+
+### 7. Build order (with done criteria)
+
+| Phase | Deliverable | Done when |
+|-------|-------------|-----------|
+| **P0** | CDP concurrency spike on Comet port 9222 | 5 simultaneous sessions stable ≥60s under load |
+| **P1** | Perplexity → `ProviderEntry` + `ChatDriver`; behavior unchanged | Existing ask/poll/stop green; unit tests for status/extraction |
+| **P2** | Grok via chrome-agent discovery + full driver | Probe “PONG” E2E; health reports known/heuristic |
+| **P3** | Tab registry, N CDP sessions, `provider_*` tools | Two providers open, polled independently; last-tab protection |
+| **P4** | `relay_message` + log + wrap/summarize; markdown decision locked | Benign cross-provider relay not blocked by classifiers |
+| **P5** | Gemini, ChatGPT, Claude.ai via same pipeline | Each addition is mostly config; health degradation path verified |
+| **P6** | `wait_any`, `session.json` persistence, override persistence | Concurrent long jobs don’t flood client context; restart resumes log |
+
+***
+
+### 8. Open risks (load-bearing)
+
+1. **Selector maintenance × N providers** — known → heuristic → override + health is mandatory structure, not polish.
+2. **Markdown inconsistency** — must be decided before relay (P4 gate).
+3. **CDP concurrency** — empirically prove on Comet before committing to N sessions (P0).
+4. **Relay classifiers** — Perplexity already blocked cross-thread content; test wrapped format on every provider with a benign probe.
+5. **Login expiry** — `login_required` health state must surface clearly; empty/blocked replies without it are unacceptable.
+6. **Tool migration** — `comet_*` aliases or a one-release deprecation plan for existing Claude configs.
+7. **Context pressure** — without `wait_any`, concurrent polls fill the orchestrator context; treat as P6 priority if multi-long-job use is common.
+
+***
+
+### What this outline adds beyond both attached docs
+
+- **P0 empirical CDP concurrency gate** before architecture lock-in.
+- **Markdown fidelity as an explicit phase gate**, not an open risk forever.
+- **Done criteria** per phase (testable “done when”).
+- **Persisted overrides** path (`~/.comet-mcp/overrides.json`).
+- **`login_required` / `degraded` states** in the session model and health reports.
+- **Tool migration / alias** note for existing users.
+- **Optional `provider_evaluate`** for live diagnosis without rebuilding (addresses Sonnet’s “no evaluate” pain).
+- Clear **non-goals** so scope doesn’t creep into multi-process Comet or full Electron-style pickers.
+
+This is the plan to execute against: contract first, prove CDP concurrency, refactor Perplexity, add Grok end-to-end, then multi-tab, then relay, then the rest of the providers.
